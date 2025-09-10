@@ -211,47 +211,68 @@ export default function ApprovalPage() {
   }
 
   async function loadInitial() {
-    setLoading(true)
-    setError(null)
-    try {
-      // Belangrijk: personnel_id selecteren en personnel normaliseren
-      const { data: reqs, error: reqErr } = await supabase
-        .from("leave_requests")
-        .select(`
+  setLoading(true)
+  setError(null)
+  try {
+    // 1) selecteer ook personnel_id en haal de join op
+    const { data: reqs, error: reqErr } = await supabase
+      .from("leave_requests")
+      .select(`
+        id,
+        personnel_id,
+        leave_date,
+        status,
+        daypart,
+        personnel:personnel_id (
           id,
-          personnel_id,
-          leave_date,
-          status,
-          daypart,
-          personnel:personnel_id (
-            id,
-            name,
-            holiday_teller,
-            avatar_url
-          )
-        `)
-        .eq("status", "requested")
-        .order("leave_date", { ascending: true })
-      if (reqErr) throw reqErr
+          name,
+          holiday_teller,
+          avatar_url
+        )
+      `)
+      .eq("status", "requested")
+      .order("leave_date", { ascending: true })
+    if (reqErr) throw reqErr
 
-      const reqList = normalizeRequests((reqs || []) as RawJoinedRow[])
-      setRequests(reqList)
+    // 2) NIET casten, maar mappen + personnel array → object
+    const reqList: LeaveRequest[] = (reqs || []).map((r: any) => {
+      const p = Array.isArray(r.personnel) ? r.personnel[0] : r.personnel
+      const personnel = p
+        ? {
+            id: p.id,
+            name: p.name,
+            holiday_teller: p.holiday_teller ?? null,
+            avatar_url: p.avatar_url ?? null,
+          }
+        : null
 
-      const dates = Array.from(new Set(reqList.map(r => r.leave_date)))
-      await loadConflictsForDates(dates)
+      return {
+        id: r.id,
+        personnel_id: r.personnel_id ?? null,
+        leave_date: r.leave_date,
+        status: r.status,
+        daypart: r.daypart ?? null,
+        personnel,
+      }
+    })
 
-      const { data: ppl, error: pplErr } = await supabase
-        .from("personnel")
-        .select("id, name, holiday_teller, avatar_url")
-        .order("name", { ascending: true })
-      if (pplErr) throw pplErr
-      setPeople((ppl || []) as Personnel[])
-    } catch (e: any) {
-      setError(e?.message ?? "Er ging iets mis bij laden.")
-    } finally {
-      setLoading(false)
-    }
+    setRequests(reqList)
+
+    const dates = Array.from(new Set(reqList.map(r => r.leave_date)))
+    await loadConflictsForDates(dates)
+
+    const { data: ppl, error: pplErr } = await supabase
+      .from("personnel")
+      .select("id, name, holiday_teller, avatar_url")
+      .order("name", { ascending: true })
+    if (pplErr) throw pplErr
+    setPeople((ppl || []) as Personnel[])
+  } catch (e: any) {
+    setError(e?.message ?? "Er ging iets mis bij laden.")
+  } finally {
+    setLoading(false)
   }
+}
 
   async function loadPersonRequests(personId: string, year: number) {
     if (!personId) { setPersonRequests([]); return }
