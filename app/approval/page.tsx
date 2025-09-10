@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabaseClient"
 import FloatingNav from "../components/FloatingNav" // zwevende navigatie
 
 /* ========= Instelbare vaste offset (px) onder de FloatingNav ========= */
-const FLOATING_NAV_OFFSET = 70; // ← HIER je vaste hoogte/offset in px
+const FLOATING_NAV_OFFSET = 70
 
 /* ========= Fonts & Kleuren ========= */
 const variableFont = localFont({ src: "../fonts/Font_Variable.otf", display: "swap" })
@@ -60,7 +60,17 @@ type LeaveRequest = {
   leave_date: string
   status: string
   daypart: string | null
-  personnel?: Personnel
+  personnel?: Personnel | null
+}
+
+/** Ruwe join row van Supabase (kan array/object zijn bij `personnel`) */
+type RawJoinedRow = {
+  id: string
+  personnel_id?: string | null
+  leave_date: string
+  status: string
+  daypart?: string | null
+  personnel?: any // kan array of object zijn
 }
 
 /* ========= Helpers ========= */
@@ -72,9 +82,8 @@ function formatDaypart(dp: string | null) {
   return dp
 }
 
-// di 11 febr '25
 const DOW = ["zo", "ma", "di", "woe", "do", "vr", "za"] as const
-const MON_ABBR = ["jan","febr","mrt","apr","mei","jun","jul","aug","sept","okt","nov","dec"] as const
+const MON_ABBR = ["jan", "febr", "mrt", "apr", "mei", "jun", "jul", "aug", "sept", "okt", "nov", "dec"] as const
 function formatDatePretty(iso: string) {
   const d = new Date(iso + "T00:00:00")
   const wd = DOW[d.getDay()]
@@ -88,6 +97,30 @@ function tellerLabel(hours?: number | null) {
   const h = Number.isFinite(hours as number) ? (hours as number) : 0
   const daysStr = new Intl.NumberFormat("nl-BE", { maximumFractionDigits: 1 }).format(h / 8)
   return `Teller: ${h} uren (${daysStr} dagen)`
+}
+
+function normalizePersonnel(p: any): Personnel | null {
+  if (!p) return null
+  // Supabase kan array retourneren; pak eerste item
+  const obj = Array.isArray(p) ? p[0] : p
+  if (!obj) return null
+  return {
+    id: obj.id,
+    name: obj.name,
+    holiday_teller: obj.holiday_teller ?? null,
+    avatar_url: obj.avatar_url ?? null,
+  }
+}
+
+function normalizeRequests(rows: RawJoinedRow[]): LeaveRequest[] {
+  return (rows || []).map((r) => ({
+    id: r.id,
+    personnel_id: r.personnel_id ?? null,
+    leave_date: r.leave_date,
+    status: r.status,
+    daypart: r.daypart ?? null,
+    personnel: normalizePersonnel(r.personnel),
+  }))
 }
 
 /* ========= Pagina ========= */
@@ -166,9 +199,9 @@ export default function ApprovalPage() {
       for (const row of (data || []) as any[]) {
         const d = row.leave_date as string
         const status = row.status as "approved" | "requested"
-        const person = row.personnel as { id: string; name: string } | null
+        const personObj = normalizePersonnel(row.personnel)
         if (!map[d]) map[d] = { approved: [], requested: [] }
-        if (person) map[d][status].push({ id: person.id, name: person.name })
+        if (personObj) map[d][status].push({ id: personObj.id, name: personObj.name })
       }
       setConflicts(map)
     } catch (e) {
@@ -181,14 +214,27 @@ export default function ApprovalPage() {
     setLoading(true)
     setError(null)
     try {
-      // ⬇️ avatar_url toegevoegd in select
+      // Belangrijk: personnel_id selecteren en personnel normaliseren
       const { data: reqs, error: reqErr } = await supabase
         .from("leave_requests")
-        .select("id, leave_date, status, daypart, personnel:personnel_id (id, name, holiday_teller, avatar_url)")
+        .select(`
+          id,
+          personnel_id,
+          leave_date,
+          status,
+          daypart,
+          personnel:personnel_id (
+            id,
+            name,
+            holiday_teller,
+            avatar_url
+          )
+        `)
         .eq("status", "requested")
         .order("leave_date", { ascending: true })
       if (reqErr) throw reqErr
-      const reqList = (reqs || []) as LeaveRequest[]
+
+      const reqList = normalizeRequests((reqs || []) as RawJoinedRow[])
       setRequests(reqList)
 
       const dates = Array.from(new Set(reqList.map(r => r.leave_date)))
@@ -196,7 +242,7 @@ export default function ApprovalPage() {
 
       const { data: ppl, error: pplErr } = await supabase
         .from("personnel")
-        .select("id, name, holiday_teller") // dropdown heeft avatar niet nodig
+        .select("id, name, holiday_teller, avatar_url")
         .order("name", { ascending: true })
       if (pplErr) throw pplErr
       setPeople((ppl || []) as Personnel[])
@@ -222,7 +268,16 @@ export default function ApprovalPage() {
         .in("status", ["requested", "approved"])
         .order("leave_date", { ascending: true })
       if (prErr) throw prErr
-      setPersonRequests((data || []) as LeaveRequest[])
+
+      const mapped: LeaveRequest[] = (data || []).map((r: any) => ({
+        id: r.id,
+        personnel_id: personId,         // we weten dit hier al
+        leave_date: r.leave_date,
+        status: r.status,
+        daypart: r.daypart ?? null,
+        personnel: null,
+      }))
+      setPersonRequests(mapped)
     } catch (e: any) {
       setError(e?.message ?? "Kon verlofdagen niet laden.")
     }
@@ -233,7 +288,10 @@ export default function ApprovalPage() {
     if (ids.length === 0) return
     setError(null)
     try {
-      const { error: upErr } = await supabase.from("leave_requests").update({ status: nextStatus }).in("id", ids)
+      const { error: upErr } = await supabase
+        .from("leave_requests")
+        .update({ status: nextStatus })
+        .in("id", ids)
       if (upErr) throw upErr
       setSelectedIds(new Set())
       await loadInitial()
@@ -276,8 +334,7 @@ export default function ApprovalPage() {
             justifyItems: "center",
             columnGap: "1%",
             rowGap: 12,
-            /* ⬇️ VASTE ruimte onder de floating nav (pas aan via FLOATING_NAV_OFFSET) */
-            marginTop: `${FLOATING_NAV_OFFSET}px`,
+            marginTop: `${FLOATING_NAV_OFFSET}px`, // vaste ruimte onder FloatingNav
           }}
         >
           {/* ===== Links: Openstaande aanvragen (gegroepeerd) ===== */}
@@ -607,7 +664,7 @@ export default function ApprovalPage() {
 
             {selectedPersonId && (
               <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 12 }}>
-                {/* Goedgekeurd (met daypart-kolom) */}
+                {/* Goedgekeurd (zonder daypart-kolom) */}
                 <section>
                   <div
                     style={{
@@ -642,7 +699,7 @@ export default function ApprovalPage() {
                             key={r.id}
                             style={{
                               display: "grid",
-                              gridTemplateColumns: `1fr ${DAYPART_COL_W}px`, // datum | daypart
+                              gridTemplateColumns: `1fr`, // alleen datum
                               alignItems: "center",
                               gap: 10,
                               padding: "10px 12px",
@@ -651,9 +708,6 @@ export default function ApprovalPage() {
                             }}
                           >
                             <div>{formatDatePretty(r.leave_date)}</div>
-                            <div style={{ fontSize: 14, color: COLORS.textMuted }}>
-                              {formatDaypart(r.daypart)}
-                            </div>
                           </li>
                         ))}
                       </ul>
@@ -661,7 +715,7 @@ export default function ApprovalPage() {
                   </div>
                 </section>
 
-                {/* Aangevraagd (met daypart-kolom) */}
+                {/* Aangevraagd (zonder daypart-kolom) */}
                 {personRequested.length > 0 && (
                   <section>
                     <div
@@ -694,7 +748,7 @@ export default function ApprovalPage() {
                             key={r.id}
                             style={{
                               display: "grid",
-                              gridTemplateColumns: `1fr ${DAYPART_COL_W}px`, // datum | daypart
+                              gridTemplateColumns: `1fr`, // alleen datum
                               alignItems: "center",
                               gap: 10,
                               padding: "10px 12px",
@@ -703,9 +757,6 @@ export default function ApprovalPage() {
                             }}
                           >
                             <div>{formatDatePretty(r.leave_date)}</div>
-                            <div style={{ fontSize: 14, color: COLORS.textMuted }}>
-                              {formatDaypart(r.daypart)}
-                            </div>
                           </li>
                         ))}
                       </ul>
