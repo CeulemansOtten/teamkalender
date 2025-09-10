@@ -216,47 +216,47 @@ export default function ApprovalPage() {
   try {
     // 1) selecteer ook personnel_id en haal de join op
     const { data: reqs, error: reqErr } = await supabase
-      .from("leave_requests")
-      .select(`
-        id,
-        personnel_id,
-        leave_date,
-        status,
-        daypart,
-        personnel:personnel_id (
-          id,
-          name,
-          holiday_teller,
-          avatar_url
-        )
-      `)
-      .eq("status", "requested")
-      .order("leave_date", { ascending: true })
-    if (reqErr) throw reqErr
+  .from("leave_requests")
+  .select(`
+    id,
+    personnel_id,            -- ← heel belangrijk
+    leave_date,
+    status,
+    daypart,
+    personnel:personnel_id ( -- join op personnel
+      id,
+      name,
+      holiday_teller,
+      avatar_url
+    )
+  `)
+  .eq("status", "requested")
+  .order("leave_date", { ascending: true })
+if (reqErr) throw reqErr
 
-    // 2) NIET casten, maar mappen + personnel array → object
-    const reqList: LeaveRequest[] = (reqs || []).map((r: any) => {
-      const p = Array.isArray(r.personnel) ? r.personnel[0] : r.personnel
-      const personnel = p
-        ? {
-            id: p.id,
-            name: p.name,
-            holiday_teller: p.holiday_teller ?? null,
-            avatar_url: p.avatar_url ?? null,
-          }
-        : null
-
-      return {
-        id: r.id,
-        personnel_id: r.personnel_id ?? null,
-        leave_date: r.leave_date,
-        status: r.status,
-        daypart: r.daypart ?? null,
-        personnel,
+// NIET casten. Netjes mappen (personnel array → object)
+const reqList: LeaveRequest[] = (reqs ?? []).map((r: any) => {
+  const pRaw = Array.isArray(r.personnel) ? r.personnel[0] : r.personnel
+  const personnel = pRaw
+    ? {
+        id: pRaw.id,
+        name: pRaw.name,
+        holiday_teller: pRaw.holiday_teller ?? null,
+        avatar_url: pRaw.avatar_url ?? null,
       }
-    })
+    : null
 
-    setRequests(reqList)
+  return {
+    id: r.id,
+    personnel_id: r.personnel_id ?? null,
+    leave_date: r.leave_date,
+    status: r.status,
+    daypart: r.daypart ?? null,
+    personnel,
+  }
+})
+
+setRequests(reqList)
 
     const dates = Array.from(new Set(reqList.map(r => r.leave_date)))
     await loadConflictsForDates(dates)
