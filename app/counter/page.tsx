@@ -38,9 +38,9 @@ type LeaveEntitlement = {
 type LeaveRequest = {
   id: string;
   personnel_id: string;
-  leave_date: string;
-  daypart: "AM" | "PM" | null;
-  status: string;
+  leave_date: string;            // ISO date
+  daypart: "AM" | "PM" | null;   // halve dag -> 4u
+  status: string;                // gefilterd op 'approved'
 };
 
 type Person = {
@@ -78,7 +78,7 @@ function CounterContent() {
         .select("id, name, surname, avatar_url")
         .eq("id", personnelId)
         .maybeSingle();
-      setPerson((p as any) || null);
+      setPerson((p as Person) || null);
 
       // Startsaldi
       const { data: ents } = await supabase
@@ -93,16 +93,19 @@ function CounterContent() {
         .eq("personnel_id", personnelId)
         .in("status", ["approved"]);
 
-      const entsArr = (ents as any) || [];
+      const entsArr: LeaveEntitlement[] = (ents as LeaveEntitlement[]) || [];
       setEntitlements(entsArr);
-      setRequests((reqs as any) || []);
+      setRequests((reqs as LeaveRequest[]) || []);
 
       // Default gekozen jaar: huidig jaar, anders meest recente
-      const years = Array.from(new Set(entsArr.map((e: LeaveEntitlement) => e.year)));
-      const nowY = new Date().getFullYear();
-      const pick = years.includes(nowY) ? nowY : years.sort((a, b) => b - a)[0] ?? null;
-      setSelectedYear(pick ?? null);
+      const years: number[] = [...new Set(entsArr.map((e) => Number(e.year)))]
+        .filter((n): n is number => Number.isFinite(n));
 
+      const nowY = new Date().getFullYear();
+      const sortedYears = [...years].sort((a, b) => b - a);
+      const pick: number | null = years.includes(nowY) ? nowY : (sortedYears[0] ?? null);
+
+      setSelectedYear(pick);
       setLoading(false);
     };
 
@@ -124,11 +127,13 @@ function CounterContent() {
     return <div style={{ padding: 20 }}>Geen <code>personnel_id</code> meegegeven in de URL.</div>;
   }
 
-  const allYearsDesc = Array.from(new Set(entitlements.map((e) => e.year))).sort((a, b) => b - a);
+  const allYearsDesc: number[] = [...new Set(entitlements.map((e) => Number(e.year)))]
+    .filter((n): n is number => Number.isFinite(n))
+    .sort((a, b) => b - a);
 
   // Data voor gekozen jaar
-  const yearEnts = selectedYear ? entitlements.filter((e) => e.year === selectedYear) : [];
-  const startsaldoHours = yearEnts.reduce((acc, e) => acc + e.total_hours, 0);
+  const yearEnts = selectedYear ? entitlements.filter((e) => Number(e.year) === selectedYear) : [];
+  const startsaldoHours = yearEnts.reduce((acc, e) => acc + Number(e.total_hours || 0), 0);
   const takenHours = selectedYear ? requestsPerYear[selectedYear] || 0 : 0;
   const saldoHours = startsaldoHours - takenHours;
 
@@ -167,7 +172,7 @@ function CounterContent() {
           alignItems: "flex-start",
         }}
       >
-        {/* Linker card: Jaren (zonder titel, hover = knop) */}
+        {/* Linker card: Jaren */}
         <aside
           style={{
             width: YEARS_CARD_WIDTH,
@@ -231,7 +236,7 @@ function CounterContent() {
             display: "flex",
             flexDirection: "column",
             gap: 12,
-            width: "min(100%, " + COUNTER_CARD_MAX_WIDTH + "px)",
+            width: `min(100%, ${COUNTER_CARD_MAX_WIDTH}px)`,
           }}
         >
           {/* Titel + Persoon (alleen voornaam) */}
@@ -244,7 +249,7 @@ function CounterContent() {
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 48, height: 48, overflow: "hidden" }}>
+              <div style={{ width: 48, height: 48, overflow: "hidden", borderRadius: 8 }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 {person?.avatar_url ? (
                   <img
