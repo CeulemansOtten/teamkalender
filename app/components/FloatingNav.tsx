@@ -27,7 +27,7 @@ type NavItem = { label: string; href: string; icon: LucideIcon };
 const NAV_ITEMS: NavItem[] = [
   { label: "Teamkalender", href: "/calendar", icon: Calendar },
   { label: "Verlof Aanvragen", href: "/vacation_request", icon: Plane },
-  { label: "Verlof Teller", href: "/teller", icon: Clock },
+  { label: "Verlof Teller", href: "/counter", icon: Clock },
   { label: "Verlof Goedkeuren", href: "/approval", icon: CalendarCheck }, // owner-only
   { label: "Admin", href: "/admin", icon: Settings }, // owner-only
 ];
