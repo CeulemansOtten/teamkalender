@@ -1,16 +1,16 @@
-"use client"
+"use client";
 
-import React, { useEffect, useMemo, useState } from "react"
-import localFont from "next/font/local"
-import { supabase } from "@/lib/supabaseClient"
-import FloatingNav from "../components/FloatingNav" // zwevende navigatie
+import React, { useEffect, useMemo, useState, Suspense } from "react";
+import localFont from "next/font/local";
+import { supabase } from "@/lib/supabaseClient";
+import FloatingNav from "../components/FloatingNav"; // zwevende navigatie
 
 /* ========= Instelbare vaste offset (px) onder de FloatingNav ========= */
-const FLOATING_NAV_OFFSET = 70
+const FLOATING_NAV_OFFSET = 70;
 
 /* ========= Fonts & Kleuren ========= */
-const variableFont = localFont({ src: "../fonts/Font_Variable.otf", display: "swap" })
-const titleFont = localFont({ src: "../fonts/Font_VariableBold.otf", display: "swap" })
+const variableFont = localFont({ src: "../fonts/Font_Variable.otf", display: "swap" });
+const titleFont = localFont({ src: "../fonts/Font_VariableBold.otf", display: "swap" });
 
 const COLORS = {
   bg: "#ffffff",
@@ -23,9 +23,9 @@ const COLORS = {
   btnHover: "#0c8e91",
   btnText: "#ffffff",
   btnBorder: "#0ea5a8",
-}
-const HEADER_BTN = { bg: "#ffffff", border: "#d1d5db", hover: "#f3f4f6" }
-const DAYPART_COL_W = 120
+};
+const HEADER_BTN = { bg: "#ffffff", border: "#d1d5db", hover: "#f3f4f6" };
+const DAYPART_COL_W = 120;
 
 /* ===== Icons ===== */
 function IconChevronLeft({ color = COLORS.primary, size = 20 }: { color?: string; size?: number }) {
@@ -34,7 +34,7 @@ function IconChevronLeft({ color = COLORS.primary, size = 20 }: { color?: string
       stroke={color} strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <polyline points="15 6 9 12 15 18" />
     </svg>
-  )
+  );
 }
 function IconChevronRight({ color = COLORS.primary, size = 20 }: { color?: string; size?: number }) {
   return (
@@ -42,74 +42,74 @@ function IconChevronRight({ color = COLORS.primary, size = 20 }: { color?: strin
       stroke={color} strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <polyline points="9 6 15 12 9 18" />
     </svg>
-  )
+  );
 }
 
 /* ========= Types ========= */
 type Personnel = {
-  id: string
-  name: string
-  holiday_teller?: number | null // uren
-  avatar_url?: string | null
-}
-type PersonRef = { id: string; name: string }
+  id: string;
+  name: string;
+  holiday_teller?: number | null; // uren
+  avatar_url?: string | null;
+};
+type PersonRef = { id: string; name: string };
 
 type LeaveRequest = {
-  id: string
-  personnel_id: string | null
-  leave_date: string
-  status: string
-  daypart: string | null
-  personnel?: Personnel | null
-}
+  id: string;
+  personnel_id: string | null;
+  leave_date: string;
+  status: string;
+  daypart: string | null;
+  personnel?: Personnel | null;
+};
 
 /** Ruwe join row van Supabase (kan array/object zijn bij `personnel`) */
 type RawJoinedRow = {
-  id: string
-  personnel_id?: string | null
-  leave_date: string
-  status: string
-  daypart?: string | null
-  personnel?: any // kan array of object zijn
-}
+  id: string;
+  personnel_id?: string | null;
+  leave_date: string;
+  status: string;
+  daypart?: string | null;
+  personnel?: any; // kan array of object zijn
+};
 
 /* ========= Helpers ========= */
 function formatDaypart(dp: string | null) {
-  if (!dp) return "hele dag"
-  const v = dp.toLowerCase()
-  if (v.includes("morning") || v.includes("voor")) return "voormiddag"
-  if (v.includes("afternoon") || v.includes("na")) return "namiddag"
-  return dp
+  if (!dp) return "hele dag";
+  const v = dp.toLowerCase();
+  if (v.includes("morning") || v.includes("voor")) return "voormiddag";
+  if (v.includes("afternoon") || v.includes("na")) return "namiddag";
+  return dp;
 }
 
-const DOW = ["zo", "ma", "di", "woe", "do", "vr", "za"] as const
-const MON_ABBR = ["jan", "febr", "mrt", "apr", "mei", "jun", "jul", "aug", "sept", "okt", "nov", "dec"] as const
+const DOW = ["zo", "ma", "di", "woe", "do", "vr", "za"] as const;
+const MON_ABBR = ["jan", "febr", "mrt", "apr", "mei", "jun", "jul", "aug", "sept", "okt", "nov", "dec"] as const;
 function formatDatePretty(iso: string) {
-  const d = new Date(iso + "T00:00:00")
-  const wd = DOW[d.getDay()]
-  const day = d.getDate()
-  const mon = MON_ABBR[d.getMonth()]
-  const y2 = String(d.getFullYear()).slice(-2)
-  return `${wd} ${day} ${mon} '${y2}`
+  const d = new Date(iso + "T00:00:00");
+  const wd = DOW[d.getDay()];
+  const day = d.getDate();
+  const mon = MON_ABBR[d.getMonth()];
+  const y2 = String(d.getFullYear()).slice(-2);
+  return `${wd} ${day} ${mon} '${y2}`;
 }
 
 function tellerLabel(hours?: number | null) {
-  const h = Number.isFinite(hours as number) ? (hours as number) : 0
-  const daysStr = new Intl.NumberFormat("nl-BE", { maximumFractionDigits: 1 }).format(h / 8)
-  return `Teller: ${h} uren (${daysStr} dagen)`
+  const h = Number.isFinite(hours as number) ? (hours as number) : 0;
+  const daysStr = new Intl.NumberFormat("nl-BE", { maximumFractionDigits: 1 }).format(h / 8);
+  return `Teller: ${h} uren (${daysStr} dagen)`;
 }
 
 function normalizePersonnel(p: any): Personnel | null {
-  if (!p) return null
+  if (!p) return null;
   // Supabase kan array retourneren; pak eerste item
-  const obj = Array.isArray(p) ? p[0] : p
-  if (!obj) return null
+  const obj = Array.isArray(p) ? p[0] : p;
+  if (!obj) return null;
   return {
     id: obj.id,
     name: obj.name,
     holiday_teller: obj.holiday_teller ?? null,
     avatar_url: obj.avatar_url ?? null,
-  }
+  };
 }
 
 function normalizeRequests(rows: RawJoinedRow[]): LeaveRequest[] {
@@ -120,46 +120,46 @@ function normalizeRequests(rows: RawJoinedRow[]): LeaveRequest[] {
     status: r.status,
     daypart: r.daypart ?? null,
     personnel: normalizePersonnel(r.personnel),
-  }))
+  }));
 }
 
-/* ========= Pagina ========= */
-export default function ApprovalPage() {
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+/* ========= Inhoud van de pagina (client) ========= */
+function ApprovalContent() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Card 1
-  const [requests, setRequests] = useState<LeaveRequest[]>([])
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [requests, setRequests] = useState<LeaveRequest[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [conflicts, setConflicts] = useState<
     Record<string, { approved: PersonRef[]; requested: PersonRef[] }>
-  >({})
+  >({});
 
   // Card 2
-  const [people, setPeople] = useState<Personnel[]>([])
-  const [selectedPersonId, setSelectedPersonId] = useState<string>("")
-  const [personYear, setPersonYear] = useState<number>(new Date().getFullYear())
-  const [personRequests, setPersonRequests] = useState<LeaveRequest[]>([])
+  const [people, setPeople] = useState<Personnel[]>([]);
+  const [selectedPersonId, setSelectedPersonId] = useState<string>("");
+  const [personYear, setPersonYear] = useState<number>(new Date().getFullYear());
+  const [personRequests, setPersonRequests] = useState<LeaveRequest[]>([]);
 
   const personRequested = useMemo(
-    () => personRequests.filter(r => r.status === "requested"),
+    () => personRequests.filter((r) => r.status === "requested"),
     [personRequests]
-  )
+  );
   const personApproved = useMemo(
-    () => personRequests.filter(r => r.status === "approved"),
+    () => personRequests.filter((r) => r.status === "approved"),
     [personRequests]
-  )
+  );
   const selectedPerson = useMemo(
-    () => people.find(p => p.id === selectedPersonId) || null,
+    () => people.find((p) => p.id === selectedPersonId) || null,
     [people, selectedPersonId]
-  )
+  );
 
   // Groeperen per personeelslid (Card 1)
   const groupedByPerson = useMemo(() => {
-    const map = new Map<string, { person: Personnel; items: LeaveRequest[] }>()
+    const map = new Map<string, { person: Personnel; items: LeaveRequest[] }>();
     for (const r of requests) {
-      const p = r.personnel
-      const key = p?.id || "onbekend"
+      const p = r.personnel;
+      const key = p?.id || "onbekend";
       if (!map.has(key)) {
         map.set(key, {
           person: {
@@ -169,117 +169,123 @@ export default function ApprovalPage() {
             avatar_url: p?.avatar_url ?? null,
           },
           items: [],
-        })
+        });
       }
-      map.get(key)!.items.push(r)
+      map.get(key)!.items.push(r);
     }
-    return Array.from(map.values()).sort((a, b) => a.person.name.localeCompare(b.person.name))
-  }, [requests])
+    return Array.from(map.values()).sort((a, b) => a.person.name.localeCompare(b.person.name));
+  }, [requests]);
 
   function toggleSelect(id: string) {
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   async function loadConflictsForDates(dates: string[]) {
-    if (!dates.length) { setConflicts({}); return }
+    if (!dates.length) {
+      setConflicts({});
+      return;
+    }
     try {
       const { data, error } = await supabase
         .from("leave_requests")
         .select("leave_date, status, personnel:personnel_id (id, name)")
         .in("leave_date", dates)
-        .in("status", ["approved", "requested"])
-      if (error) throw error
+        .in("status", ["approved", "requested"]);
+      if (error) throw error;
 
-      const map: Record<string, { approved: PersonRef[]; requested: PersonRef[] }> = {}
+      const map: Record<string, { approved: PersonRef[]; requested: PersonRef[] }> = {};
       for (const row of (data || []) as any[]) {
-        const d = row.leave_date as string
-        const status = row.status as "approved" | "requested"
-        const personObj = normalizePersonnel(row.personnel)
-        if (!map[d]) map[d] = { approved: [], requested: [] }
-        if (personObj) map[d][status].push({ id: personObj.id, name: personObj.name })
+        const d = row.leave_date as string;
+        const status = row.status as "approved" | "requested";
+        const personObj = normalizePersonnel(row.personnel);
+        if (!map[d]) map[d] = { approved: [], requested: [] };
+        if (personObj) map[d][status].push({ id: personObj.id, name: personObj.name });
       }
-      setConflicts(map)
+      setConflicts(map);
     } catch (e) {
-      console.error("conflict-fetch failed", e)
-      setConflicts({})
+      console.error("conflict-fetch failed", e);
+      setConflicts({});
     }
   }
 
   async function loadInitial() {
-  setLoading(true)
-  setError(null)
-  try {
-    // 1) selecteer ook personnel_id en haal de join op
-    const { data: reqs, error: reqErr } = await supabase
-  .from("leave_requests")
-  .select(`
-    id,
-    personnel_id,            -- ← heel belangrijk
-    leave_date,
-    status,
-    daypart,
-    personnel:personnel_id ( -- join op personnel
-      id,
-      name,
-      holiday_teller,
-      avatar_url
-    )
-  `)
-  .eq("status", "requested")
-  .order("leave_date", { ascending: true })
-if (reqErr) throw reqErr
+    setLoading(true);
+    setError(null);
+    try {
+      // 1) openstaande requests + join op personnel
+      const { data: reqs, error: reqErr } = await supabase
+        .from("leave_requests")
+        .select(`
+          id,
+          personnel_id,
+          leave_date,
+          status,
+          daypart,
+          personnel:personnel_id (
+            id,
+            name,
+            holiday_teller,
+            avatar_url
+          )
+        `)
+        .eq("status", "requested")
+        .order("leave_date", { ascending: true });
+      if (reqErr) throw reqErr;
 
-// NIET casten. Netjes mappen (personnel array → object)
-const reqList: LeaveRequest[] = (reqs ?? []).map((r: any) => {
-  const pRaw = Array.isArray(r.personnel) ? r.personnel[0] : r.personnel
-  const personnel = pRaw
-    ? {
-        id: pRaw.id,
-        name: pRaw.name,
-        holiday_teller: pRaw.holiday_teller ?? null,
-        avatar_url: pRaw.avatar_url ?? null,
-      }
-    : null
+      const reqList: LeaveRequest[] = (reqs ?? []).map((r: any) => {
+        const pRaw = Array.isArray(r.personnel) ? r.personnel[0] : r.personnel;
+        const personnel = pRaw
+          ? {
+              id: pRaw.id,
+              name: pRaw.name,
+              holiday_teller: pRaw.holiday_teller ?? null,
+              avatar_url: pRaw.avatar_url ?? null,
+            }
+          : null;
 
-  return {
-    id: r.id,
-    personnel_id: r.personnel_id ?? null,
-    leave_date: r.leave_date,
-    status: r.status,
-    daypart: r.daypart ?? null,
-    personnel,
+        return {
+          id: r.id,
+          personnel_id: r.personnel_id ?? null,
+          leave_date: r.leave_date,
+          status: r.status,
+          daypart: r.daypart ?? null,
+          personnel,
+        };
+      });
+
+      setRequests(reqList);
+
+      const dates = Array.from(new Set(reqList.map((r) => r.leave_date)));
+      await loadConflictsForDates(dates);
+
+      // 2) People voor dropdown
+      const { data: ppl, error: pplErr } = await supabase
+        .from("personnel")
+        .select("id, name, holiday_teller, avatar_url")
+        .order("name", { ascending: true });
+      if (pplErr) throw pplErr;
+      setPeople((ppl || []) as Personnel[]);
+    } catch (e: any) {
+      setError(e?.message ?? "Er ging iets mis bij laden.");
+    } finally {
+      setLoading(false);
+    }
   }
-})
-
-setRequests(reqList)
-
-    const dates = Array.from(new Set(reqList.map(r => r.leave_date)))
-    await loadConflictsForDates(dates)
-
-    const { data: ppl, error: pplErr } = await supabase
-      .from("personnel")
-      .select("id, name, holiday_teller, avatar_url")
-      .order("name", { ascending: true })
-    if (pplErr) throw pplErr
-    setPeople((ppl || []) as Personnel[])
-  } catch (e: any) {
-    setError(e?.message ?? "Er ging iets mis bij laden.")
-  } finally {
-    setLoading(false)
-  }
-}
 
   async function loadPersonRequests(personId: string, year: number) {
-    if (!personId) { setPersonRequests([]); return }
-    setError(null)
+    if (!personId) {
+      setPersonRequests([]);
+      return;
+    }
+    setError(null);
     try {
-      const from = `${year}-01-01`
-      const to = `${year + 1}-01-01`
+      const from = `${year}-01-01`;
+      const to = `${year + 1}-01-01`;
       const { data, error: prErr } = await supabase
         .from("leave_requests")
         .select("id, leave_date, status, daypart")
@@ -287,43 +293,47 @@ setRequests(reqList)
         .gte("leave_date", from)
         .lt("leave_date", to)
         .in("status", ["requested", "approved"])
-        .order("leave_date", { ascending: true })
-      if (prErr) throw prErr
+        .order("leave_date", { ascending: true });
+      if (prErr) throw prErr;
 
       const mapped: LeaveRequest[] = (data || []).map((r: any) => ({
         id: r.id,
-        personnel_id: personId,         // we weten dit hier al
+        personnel_id: personId,
         leave_date: r.leave_date,
         status: r.status,
         daypart: r.daypart ?? null,
         personnel: null,
-      }))
-      setPersonRequests(mapped)
+      }));
+      setPersonRequests(mapped);
     } catch (e: any) {
-      setError(e?.message ?? "Kon verlofdagen niet laden.")
+      setError(e?.message ?? "Kon verlofdagen niet laden.");
     }
   }
 
   async function batchUpdateSelected(nextStatus: "approved" | "rejected") {
-    const ids = Array.from(selectedIds)
-    if (ids.length === 0) return
-    setError(null)
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setError(null);
     try {
       const { error: upErr } = await supabase
         .from("leave_requests")
         .update({ status: nextStatus })
-        .in("id", ids)
-      if (upErr) throw upErr
-      setSelectedIds(new Set())
-      await loadInitial()
-      if (selectedPersonId) await loadPersonRequests(selectedPersonId, personYear)
+        .in("id", ids);
+      if (upErr) throw upErr;
+      setSelectedIds(new Set());
+      await loadInitial();
+      if (selectedPersonId) await loadPersonRequests(selectedPersonId, personYear);
     } catch (e: any) {
-      setError(e?.message ?? "Updaten mislukt.")
+      setError(e?.message ?? "Updaten mislukt.");
     }
   }
 
-  useEffect(() => { loadInitial() }, [])
-  useEffect(() => { if (selectedPersonId) loadPersonRequests(selectedPersonId, personYear) }, [selectedPersonId, personYear])
+  useEffect(() => {
+    loadInitial();
+  }, []);
+  useEffect(() => {
+    if (selectedPersonId) loadPersonRequests(selectedPersonId, personYear);
+  }, [selectedPersonId, personYear]);
 
   /* ======== UI ======== */
   return (
@@ -456,17 +466,17 @@ setRequests(reqList)
                     {/* Lijst: checkbox | datum(+conflict) | daypart */}
                     <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
                       {items.map((r) => {
-                        const c = conflicts[r.leave_date]
-                        const othersApproved = (c?.approved || []).filter(p => p.id !== r.personnel?.id)
-                        const othersRequested = (c?.requested || []).filter(p => p.id !== r.personnel?.id)
+                        const c = conflicts[r.leave_date];
+                        const othersApproved = (c?.approved || []).filter((p) => p.id !== r.personnel?.id);
+                        const othersRequested = (c?.requested || []).filter((p) => p.id !== r.personnel?.id);
                         const apprLine =
                           othersApproved.length > 0
                             ? `${othersApproved[0].name}${othersApproved.length > 1 ? ` (+${othersApproved.length - 1})` : ""} heeft op dezelfde dag verlof`
-                            : null
+                            : null;
                         const reqLine =
                           othersRequested.length > 0
                             ? `${othersRequested[0].name}${othersRequested.length > 1 ? ` (+${othersRequested.length - 1})` : ""} heeft voor dezelfde dag verlof aangevraagd`
-                            : null
+                            : null;
 
                         return (
                           <li
@@ -500,7 +510,7 @@ setRequests(reqList)
                               {formatDaypart(r.daypart)}
                             </div>
                           </li>
-                        )
+                        );
                       })}
                     </ul>
                   </div>
@@ -537,7 +547,7 @@ setRequests(reqList)
                 className={titleFont.className}
                 style={{
                   padding: "10px 14px",
-                  background: (selectedIds.size === 0 || loading) ? "#94d6d7" : COLORS.btnBg,
+                  background: selectedIds.size === 0 || loading ? "#94d6d7" : COLORS.btnBg,
                   color: COLORS.btnText,
                   border: `1px solid ${COLORS.btnBorder}`,
                   borderRadius: 999,
@@ -548,10 +558,10 @@ setRequests(reqList)
                   minWidth: 120,
                 }}
                 onMouseOver={(e) => {
-                  if (!(selectedIds.size === 0 || loading)) e.currentTarget.style.background = COLORS.btnHover
+                  if (!(selectedIds.size === 0 || loading)) e.currentTarget.style.background = COLORS.btnHover;
                 }}
                 onMouseOut={(e) => {
-                  if (!(selectedIds.size === 0 || loading)) e.currentTarget.style.background = COLORS.btnBg
+                  if (!(selectedIds.size === 0 || loading)) e.currentTarget.style.background = COLORS.btnBg;
                 }}
               >
                 Goedkeuren
@@ -720,7 +730,7 @@ setRequests(reqList)
                             key={r.id}
                             style={{
                               display: "grid",
-                              gridTemplateColumns: `1fr`, // alleen datum
+                              gridTemplateColumns: `1fr`,
                               alignItems: "center",
                               gap: 10,
                               padding: "10px 12px",
@@ -769,7 +779,7 @@ setRequests(reqList)
                             key={r.id}
                             style={{
                               display: "grid",
-                              gridTemplateColumns: `1fr`, // alleen datum
+                              gridTemplateColumns: `1fr`,
                               alignItems: "center",
                               gap: 10,
                               padding: "10px 12px",
@@ -790,5 +800,17 @@ setRequests(reqList)
         </section>
       </main>
     </>
-  )
+  );
 }
+
+/* ========= Suspense-wrapper ========= */
+export default function Page() {
+  return (
+    <Suspense fallback={<div style={{ padding: 12 }}>Laden…</div>}>
+      <ApprovalContent />
+    </Suspense>
+  );
+}
+
+/* Voorkom prerender-fouten wanneer hooks in client children gebruikt worden */
+export const dynamic = "force-dynamic";

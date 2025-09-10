@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useMemo, useState } from "react"
+import React, { useEffect, useMemo, useState, Suspense } from "react"
 import localFont from "next/font/local"
 import { useSearchParams } from "next/navigation"
 import { supabase } from "@/lib/supabaseClient"
@@ -159,10 +159,10 @@ function DayCell({
   let borderColor = COLORS.line
   let borderWidth = 1
   if (hasNewSelection) {
-    borderColor = COLORS.applyBorder   // donkerrood bij "verlof aanvragen"
+    borderColor = COLORS.applyBorder
     borderWidth = 2
   } else if (withdrawSelected) {
-    borderColor = COLORS.primary       // groen bij "intrekken"-selectie
+    borderColor = COLORS.primary
     borderWidth = 2
   } else if (hasExisting) {
     borderColor = COLORS.line
@@ -187,7 +187,7 @@ function DayCell({
         alignItems: "center",
         justifyContent: "center",
         fontSize: 13,
-        color: "#000", // cijfers altijd zwart
+        color: "#000",
         opacity: day ? 1 : 0.55,
         userSelect: "none",
         transition: "background 120ms ease-in-out, border-color 120ms ease-in-out",
@@ -334,11 +334,10 @@ function MonthCalendar({
               const isWeekend = di === 5 || di === 6
               let baseBg = "#fff"
               let label: string | undefined
-              let holidayType: "school" | "public" | undefined
 
               if (day) {
                 const key = ymd(year, month0, day)
-                holidayType = holidayTypes[key]
+                const holidayType = holidayTypes[key]
                 if (holidayType === "school") {
                   baseBg = COLORS.schoolBg
                   label = "Schoolvakantie"
@@ -403,14 +402,14 @@ function MonthCalendar({
   )
 }
 
-/* ===== Page ===== */
-export default function CalendarPage() {
+/* ===== De eigenlijke pagina-inhoud (deze gebruikt useSearchParams) ===== */
+function VacationRequestContent() {
   const search = useSearchParams()
   const personnelId = search.get("personnel_id")
 
   const [year, setYear] = useState(2025)
   const [personName, setPersonName] = useState<string>("…")
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null) // ✅ avatar state
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [holidayTypes, setHolidayTypes] = useState<Record<string, "school" | "public">>({})
   const [selections, setSelections] = useState<Record<string, SelState>>({})
   const [existingByDate, setExistingByDate] = useState<ExistingByDate>({})
@@ -496,7 +495,7 @@ export default function CalendarPage() {
       .in("status", ["requested", "approved"])
 
     let { data, error } = await query
-    if (error) { // fallback naar enkelvoudige tabel
+    if (error) {
       const alt = await supabase
         .from("leave_request")
         .select("leave_date,status,daypart")
@@ -662,7 +661,6 @@ export default function CalendarPage() {
 
   return (
     <>
-      {/* ✅ Zwevende navigatie bovenaan */}
       <FloatingNav />
 
       <main
@@ -671,10 +669,10 @@ export default function CalendarPage() {
           minHeight: "100vh",
           padding: 24,
           boxSizing: "border-box",
-          marginTop: `${FLOATING_NAV_OFFSET}px`, // ruimte onder floating nav
+          marginTop: `${FLOATING_NAV_OFFSET}px`,
         }}
       >
-        {/* ✅ Header in het midden, met prev/h1/next — en avatar naast de naam */}
+        {/* Header */}
         <header
           style={{
             display: "flex",
@@ -725,17 +723,12 @@ export default function CalendarPage() {
             }}
           >
             <span>Persoonlijke kalender van</span>
-          
             <span>{personName}</span>
-
-              {avatarUrl && (
+            {avatarUrl && (
               <img
                 src={avatarUrl}
                 alt={personName}
-                style={{
-                  height: "1em",          // ✅ even hoog als de titeltekst
-                  width: "1em",
-                }}
+                style={{ height: "1em", width: "1em" }}
               />
             )}
           </h1>
@@ -785,7 +778,7 @@ export default function CalendarPage() {
           ))}
         </section>
 
-        {/* Verlof aanvragen bar (rechtsonder) */}
+        {/* Verlof aanvragen bar */}
         {selectionBarVisible && (
           <div
             style={{
@@ -807,7 +800,7 @@ export default function CalendarPage() {
               className={titleFont.className}
               style={{ color: COLORS.text, fontSize: 14, fontWeight: 800, position: "relative", zIndex: 2 }}
             >
-              {totalDaysLabel} dag{totalDays === 1 ? "" : "en"} geselecteerd
+              {new Intl.NumberFormat("nl-BE", { maximumFractionDigits: 1 }).format(totalDays)} dag{totalDays === 1 ? "" : "en"} geselecteerd
             </span>
 
             <button
@@ -835,13 +828,13 @@ export default function CalendarPage() {
           </div>
         )}
 
-        {/* Verlof intrekken bar — 2-staps bevestiging */}
-        {withdrawBarVisible && (
+        {/* Verlof intrekken bar */}
+        {Object.keys(withdrawSelections).length > 0 && (
           <div
             style={{
               position: "fixed",
               right: 24,
-              bottom: selectionBarVisible ? 92 : 24, // stapel boven aanvragen-bar
+              bottom: selectionBarVisible ? 92 : 24,
               display: "flex",
               alignItems: "center",
               gap: 12,
@@ -853,15 +846,12 @@ export default function CalendarPage() {
               zIndex: 10000,
             }}
           >
+            { /* 2-staps bevestiging */ }
             {withdrawConfirm ? (
               <>
-                <span
-                  className={titleFont.className}
-                  style={{ color: COLORS.text, fontSize: 14, fontWeight: 800 }}
-                >
+                <span className={titleFont.className} style={{ color: COLORS.text, fontSize: 14, fontWeight: 800 }}>
                   Zeker dat je je verlof wil intrekken?
                 </span>
-
                 <button
                   onClick={() => setWithdrawConfirm(false)}
                   className={titleFont.className}
@@ -879,7 +869,6 @@ export default function CalendarPage() {
                 >
                   Neen
                 </button>
-
                 <button
                   onClick={onWithdrawLeave}
                   disabled={withdrawing}
@@ -902,13 +891,14 @@ export default function CalendarPage() {
               </>
             ) : (
               <>
-                <span
-                  className={titleFont.className}
-                  style={{ color: COLORS.text, fontSize: 14, fontWeight: 800 }}
-                >
-                  {withdrawTotalLabel} dag{withdrawTotal === 1 ? "" : "en"} geselecteerd om in te trekken
+                <span className={titleFont.className} style={{ color: COLORS.text, fontSize: 14, fontWeight: 800 }}>
+                  {new Intl.NumberFormat("nl-BE", { maximumFractionDigits: 1 }).format(
+                    Object.keys(withdrawSelections).reduce((sum, k) => {
+                      const ex = existingByDate[k]; if (!ex) return sum
+                      return sum + (ex.am ? 0.5 : 0) + (ex.pm ? 0.5 : 0)
+                    }, 0)
+                  )} dagen geselecteerd om in te trekken
                 </span>
-
                 <button
                   onClick={() => setWithdrawSelections({})}
                   className={titleFont.className}
@@ -926,7 +916,6 @@ export default function CalendarPage() {
                 >
                   Neen
                 </button>
-
                 <button
                   onClick={() => setWithdrawConfirm(true)}
                   className={titleFont.className}
@@ -953,3 +942,15 @@ export default function CalendarPage() {
     </>
   )
 }
+
+/* ===== Suspense-wrapper voor de pagina ===== */
+export default function Page() {
+  return (
+    <Suspense fallback={<div style={{ padding: 12 }}>Laden…</div>}>
+      <VacationRequestContent />
+    </Suspense>
+  )
+}
+
+/* Dit voorkomt dat Next probeert te prerenderen als SSG terwijl we searchParams gebruiken */
+export const dynamic = "force-dynamic"
