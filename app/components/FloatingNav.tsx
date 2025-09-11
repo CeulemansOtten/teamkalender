@@ -14,7 +14,7 @@ const titleFont = localFont({
   display: "swap",
 });
 
-/* Kleuren */
+/* UI */
 const UI = {
   text: "#0f172a",
   muted: "#475569",
@@ -22,6 +22,8 @@ const UI = {
   hoverBg: "#f3f4f6",
   border: "#d1d5db",
 };
+
+const ROW_H = 36; // ✅ vaste hoogte voor alles
 
 type NavItem = { label: string; href: string; icon: LucideIcon };
 const NAV_ITEMS: NavItem[] = [
@@ -40,10 +42,8 @@ export default function FloatingNav() {
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
 
-  // Querystring voor alle links
   const q = personnelId ? `?personnel_id=${encodeURIComponent(personnelId)}` : "";
 
-  // Status ophalen
   useEffect(() => {
     let on = true;
     (async () => {
@@ -75,7 +75,6 @@ export default function FloatingNav() {
 
   const isOwner = status === "owner";
 
-  // Filter items: “Goedkeuren” en “Admin” alleen voor owners
   const visibleItems = useMemo(() => {
     return NAV_ITEMS.filter((it) => {
       const ownerOnly = it.href === "/approval" || it.href === "/admin";
@@ -83,7 +82,6 @@ export default function FloatingNav() {
     });
   }, [isOwner]);
 
-  // Bepaal huidig item aan de hand van de zichtbare items (geen verborgen item tonen als current)
   const current = useMemo(() => {
     const found = visibleItems.find((it) =>
       pathname ? pathname.toLowerCase().startsWith(it.href.toLowerCase()) : false
@@ -91,13 +89,10 @@ export default function FloatingNav() {
     return found ?? visibleItems[0] ?? NAV_ITEMS[0];
   }, [pathname, visibleItems]);
 
-  // In uitgeklapte staat: huidige item eerst
-  const orderedItems = useMemo(() => {
-    const others = visibleItems.filter(
-      (it) => it.href.toLowerCase() !== current.href.toLowerCase()
-    );
-    return [current, ...others];
-  }, [current, visibleItems]);
+  const others = useMemo(
+    () => visibleItems.filter((it) => it.href.toLowerCase() !== current.href.toLowerCase()),
+    [visibleItems, current]
+  );
 
   return (
     <div
@@ -121,60 +116,48 @@ export default function FloatingNav() {
           border: `1px solid ${UI.border}`,
         }}
       >
-        {/* Ingeklapt */}
-        {!open && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <CurrentLabel icon={current.icon} label={current.label} />
-            <CircleButton ariaLabel="Open navigatie" onClick={() => setOpen(true)}>
-              <ChevronRightBoldWhite />
-            </CircleButton>
-          </div>
-        )}
+        {/* Altijd zichtbaar: huidige label */}
+        <CurrentLabel icon={current.icon} label={current.label} />
 
-        {/* Uitgeklapt */}
-        {open && (
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            {orderedItems.map((item, idx) => {
-              const active =
-                pathname?.toLowerCase().startsWith(item.href.toLowerCase()) ?? false;
+        {/* Uitschuifbare container met overige links */}
+        <div
+          aria-hidden={!open}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: open ? 12 : 0,
+            maxWidth: open ? 1000 : 0,                 // ⬅️ breedte-animatie
+            height: open ? ROW_H : 0,                  // ⬅️ geen extra hoogte als dicht
+            overflow: "hidden",
+            transition: "max-width 360ms cubic-bezier(.2,.8,.2,1), height 0ms linear",
+            minWidth: 0,
+            pointerEvents: open ? "auto" : "none",
+          }}
+        >
+          {others.map((item, idx) => {
+            const active = pathname?.toLowerCase().startsWith(item.href.toLowerCase()) ?? false;
+            const delay = open ? idx * 50 : 0; // subtiele stagger
 
-              // eerste = huidige → niet klikbaar
-              if (idx === 0) {
-                return (
-                  <NavLinkItem
-                    key={item.href}
-                    className={titleFont.className}
-                    icon={item.icon}
-                    label={item.label}
-                    active={true}
-                    disableHover={true}
-                    notClickable={true}
-                    noUnderline={true}
-                  />
-                );
-              }
+            return (
+              <Link key={item.href} href={`${item.href}${q}`} style={{ textDecoration: "none" }}>
+                <NavLinkItem
+                  className={titleFont.className}
+                  icon={item.icon}
+                  label={item.label}
+                  active={active}
+                  reveal={open}
+                  delay={delay}
+                />
+              </Link>
+            );
+          })}
 
-              return (
-                <Link
-                  key={item.href}
-                  href={`${item.href}${q}`}
-                  style={{ textDecoration: "none" }}
-                >
-                  <NavLinkItem
-                    className={titleFont.className}
-                    icon={item.icon}
-                    label={item.label}
-                    active={active}
-                  />
-                </Link>
-              );
-            })}
+          {/* Sluit-knop binnen de uitschuif-container */}
+          <CircleButton ariaLabel="Sluit navigatie" onClick={() => setOpen(false)} />
+        </div>
 
-            <CircleButton ariaLabel="Sluit navigatie" onClick={() => setOpen(false)}>
-              <ChevronLeftBoldWhite />
-            </CircleButton>
-          </div>
-        )}
+        {/* Open-knop buiten de uitschuif-container */}
+        {!open && <CircleButton ariaLabel="Open navigatie" onClick={() => setOpen(true)} />}
       </div>
     </div>
   );
@@ -190,9 +173,8 @@ function CurrentLabel({ icon: Icon, label }: { icon: LucideIcon; label: string }
         display: "inline-flex",
         alignItems: "center",
         gap: 10,
-        background: "transparent",
-        border: "none",
-        padding: "8px 6px",
+        height: ROW_H,                 // ✅ vaste hoogte
+        padding: "0 6px",              // geen verticale padding
         fontSize: 18,
         fontWeight: 900,
         letterSpacing: 0.2,
@@ -213,6 +195,8 @@ function NavLinkItem({
   disableHover = false,
   notClickable = false,
   noUnderline = false,
+  reveal = false,
+  delay = 0,
 }: {
   className?: string;
   icon: LucideIcon;
@@ -221,6 +205,8 @@ function NavLinkItem({
   disableHover?: boolean;
   notClickable?: boolean;
   noUnderline?: boolean;
+  reveal?: boolean;
+  delay?: number;
 }) {
   const [hovered, setHovered] = useState(false);
   const showHover = !disableHover && !active && hovered;
@@ -238,18 +224,24 @@ function NavLinkItem({
         display: "inline-flex",
         alignItems: "center",
         gap: 10,
+        height: ROW_H,                 // ✅ vaste hoogte
+        padding: "0 8px",
         background: bg,
         border: "none",
         borderRadius: 10,
-        padding: "8px 8px",
         fontSize: 18,
         fontWeight: 900,
         letterSpacing: 0.2,
         color: active ? UI.text : UI.muted,
         position: "relative",
         cursor: notClickable ? "default" : "pointer",
-        transition: "background 150ms ease",
+        transition:
+          "background 150ms ease, transform 320ms ease, opacity 240ms ease",
         pointerEvents: notClickable ? "none" : "auto",
+        transform: reveal ? "translateX(0)" : "translateX(8px)",
+        opacity: reveal ? 1 : 0,
+        transitionDelay: `${delay}ms`,
+        whiteSpace: "nowrap",
       }}
     >
       <Icon size={18} strokeWidth={2.5} color={UI.primary} />
@@ -279,12 +271,12 @@ function NavLinkItem({
 function CircleButton({
   ariaLabel,
   onClick,
-  children,
 }: {
   ariaLabel: string;
-  onClick: () => void;
-  children: React.ReactNode;
+  onClick?: () => void;
 }) {
+  // Chevron wisselt automatisch (open/dicht)
+  const isClose = ariaLabel.toLowerCase().includes("sluit");
   return (
     <button
       type="button"
@@ -292,11 +284,11 @@ function CircleButton({
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        onClick();
+        onClick?.();
       }}
       style={{
-        width: 36,
-        height: 36,
+        width: ROW_H,
+        height: ROW_H,
         borderRadius: "50%",
         border: "none",
         cursor: "pointer",
@@ -304,9 +296,13 @@ function CircleButton({
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
+        transition: "transform 200ms ease",
       }}
+      onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.96)")}
+      onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+      onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
     >
-      {children}
+      {isClose ? <ChevronLeftBoldWhite /> : <ChevronRightBoldWhite />}
     </button>
   );
 }

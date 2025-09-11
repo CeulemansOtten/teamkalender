@@ -16,7 +16,7 @@ const PERSON_CARD_MAX_WIDTH = 660;
 /* Uren beheren veldbreedtes */
 const HOURS_FIELD_WIDTH_PX = 120;
 const HOURS_YEAR_FIELD_WIDTH_PX = 80;
-const HOURS_ADD_FIELD_HALF_WIDTH_PX = Math.max(40, Math.round(HOURS_FIELD_WIDTH_PX / 2));
+const HOURS_ADD_FIELD_HALF_WIDTH_PX = 65;
 
 /* Personeel beheren veldbreedtes */
 const PERSON_FIELD_WIDTH_PX = 120;
@@ -823,7 +823,6 @@ export default function AdminPage() {
                           onClick={() => saveEnt(ent)}
                           style={{
                             background: "transparent",
-                            border: `1px solid ${COLORS.line}`,
                             height: 32,
                             width: 32,
                             borderRadius: 8,
@@ -868,7 +867,7 @@ export default function AdminPage() {
                 onSubmit={addHours}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: `${HOURS_ADD_FIELD_HALF_WIDTH_PX}px ${HOURS_FIELD_WIDTH_PX}px ${HOURS_YEAR_FIELD_WIDTH_PX}px 50px`,
+                  gridTemplateColumns: `60px 115px 80px 50px`,
                   gap: 10,
                   alignItems: "center",
                   marginTop: 10,
@@ -1113,7 +1112,7 @@ export default function AdminPage() {
                           onClick={() => savePerson(p)}
                           style={{
                             background: "transparent",
-                            border: `1px solid ${COLORS.line}`,
+                            
                             height: 32,
                             width: 32,
                             borderRadius: 8,

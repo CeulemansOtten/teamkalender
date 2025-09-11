@@ -4,10 +4,11 @@ import React, { useEffect, useState, Suspense } from "react";
 import localFont from "next/font/local";
 import { supabase } from "@/lib/supabaseClient";
 import FloatingNav from "../components/FloatingNav";
-import { School, PartyPopper } from "lucide-react";   // Lucide iconen
+import LegendNavCalendar from "../components/LegendNav_Calendar";
+import { School, PartyPopper, Cake } from "lucide-react";   // Lucide iconen
 
 /* Vaste offset onder FloatingNav */
-const FLOATING_NAV_OFFSET = 12;
+const FLOATING_NAV_OFFSET = 5
 
 // Fonts enkel op deze pagina laden
 const monthFont = localFont({ src: "../fonts/Font_Variable.otf", display: "swap" });
@@ -27,9 +28,10 @@ const COLORS = {
   schoolBg: "#FFF9C4",
   publicBg: "#FDE68A",
   approvedBg: "#C3E8E9",
+  birthdayBg: "#FCE7F3", // zachte roze tint (gevraagd)
 };
 
-// Breedte van de strepen (px) voor gearceerde cellen
+// Breedte van de strepen (px) – we gebruiken GEEN streepjes als er verjaardag is
 const STRIPE = 6;
 
 const MONTHS_NL = [
@@ -81,7 +83,8 @@ type HolidayInfo = { type: "school" | "public"; name: string };
 type LeavePerson = { name: string; avatar_url: string | null };
 type TooltipItem =
   | { kind: "holiday"; name: string; subtype: "school" | "public" }
-  | { kind: "leave"; people: LeavePerson[] };
+  | { kind: "leave"; people: LeavePerson[] }
+  | { kind: "birthday"; names: string[] };
 
 /* ===== Month component ===== */
 function MonthCalendar({
@@ -89,12 +92,14 @@ function MonthCalendar({
   month0,
   holidaysByDate,
   approvedByDate,
+  birthdaysByDate,
   onHover,
 }: {
   year: number;
   month0: number;
   holidaysByDate: Record<string, HolidayInfo>;
   approvedByDate: Record<string, LeavePerson[]>;
+  birthdaysByDate: Record<string, string[]>;
   onHover: (e: React.MouseEvent | null, items: TooltipItem[] | null) => void;
 }) {
   const weeks = buildMonthMatrix(year, month0);
@@ -158,12 +163,13 @@ function MonthCalendar({
             {week.map((day, di) => {
               const isWeekend = di === 5 || di === 6;
 
-              // Geen shorthand 'background', maar losse properties
+              // We gebruiken alléén losse background-* props (geen shorthand)
               let backgroundColor = "#fff";
               let backgroundImage: string | "none" = "none";
               let backgroundRepeat: "repeat" | "no-repeat" = "no-repeat";
               let backgroundSize = "auto";
               let backgroundPosition = "0 0";
+              let boxShadowVal = "none";
 
               const items: TooltipItem[] = [];
 
@@ -171,46 +177,69 @@ function MonthCalendar({
                 const key = ymd(year, month0, day);
                 const h = holidaysByDate[key];
                 const leaves = approvedByDate[key] || [];
+                const bdays = birthdaysByDate[key] || [];
 
                 const holidayColor =
                   h?.type === "public" ? COLORS.publicBg :
                   h?.type === "school" ? COLORS.schoolBg :
                   null;
 
-                // 1) Beide aanwezig → gearceerd
-                if (holidayColor && leaves.length > 0) {
-                  backgroundColor = COLORS.approvedBg;
-                  backgroundImage = `repeating-linear-gradient(
-                    45deg,
-                    ${holidayColor},
-                    ${holidayColor} ${STRIPE}px,
-                    ${COLORS.approvedBg} ${STRIPE}px,
-                    ${COLORS.approvedBg} ${STRIPE * 2}px
-                  )`;
-                  backgroundRepeat = "repeat";
-                  backgroundSize = "auto";
-                  backgroundPosition = "0 0";
-                }
-                // 2) Enkel holiday
-                else if (holidayColor) {
-                  backgroundColor = holidayColor;
-                  backgroundImage = "none";
-                  backgroundRepeat = "no-repeat";
-                }
-                // 3) Enkel approved leave
-                else if (leaves.length > 0) {
-                  backgroundColor = COLORS.approvedBg;
-                  backgroundImage = "none";
-                  backgroundRepeat = "no-repeat";
-                }
-                // 4) Weekend
-                else if (isWeekend) {
-                  backgroundColor = COLORS.weekendBg;
-                  backgroundImage = "none";
-                  backgroundRepeat = "no-repeat";
+                const hasHoliday = !!holidayColor;
+                const hasLeave = leaves.length > 0;
+                const hasBirthday = bdays.length > 0;
+
+                // ===== Achtergrondregels (nooit streepjes als er verjaardag is) =====
+                if (hasBirthday) {
+                  // Verjaardag alleen
+                  if (!hasHoliday && !hasLeave) {
+                    backgroundColor = COLORS.birthdayBg;
+                    // subtiele ring is hier optioneel; we houden het clean zonder ring
+                    boxShadowVal = "none";
+                  }
+                  // Verjaardag + feestdag (zonder verlof)
+                  else if (hasHoliday && !hasLeave) {
+                    backgroundColor = holidayColor!;
+                    backgroundImage = "none";
+                    boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`; // roze ring
+                  }
+                  // Verjaardag + verlof (zonder feestdag)
+                  else if (!hasHoliday && hasLeave) {
+                    backgroundColor = COLORS.approvedBg;
+                    backgroundImage = "none";
+                    boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`; // roze ring
+                  }
+                  // Verjaardag + feestdag + verlof
+                  else if (hasHoliday && hasLeave) {
+                    // geen streepjes: we kiezen een neutrale basis (approved) + roze ring
+                    backgroundColor = COLORS.approvedBg;
+                    backgroundImage = "none";
+                    boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`; // roze ring
+                  }
+                } else {
+                  // GEEN verjaardag → behoud je huidige logica, inclusief streepjes voor holiday+leave
+                  if (hasHoliday && hasLeave) {
+                    backgroundColor = COLORS.approvedBg;
+                    backgroundImage = `repeating-linear-gradient(
+                      45deg,
+                      ${holidayColor},
+                      ${holidayColor} ${STRIPE}px,
+                      ${COLORS.approvedBg} ${STRIPE}px,
+                      ${COLORS.approvedBg} ${STRIPE * 2}px
+                    )`;
+                    backgroundRepeat = "repeat";
+                  } else if (hasHoliday) {
+                    backgroundColor = holidayColor!;
+                    backgroundImage = "none";
+                  } else if (hasLeave) {
+                    backgroundColor = COLORS.approvedBg;
+                    backgroundImage = "none";
+                  } else if (isWeekend) {
+                    backgroundColor = COLORS.weekendBg;
+                  }
                 }
 
-                // Tooltip-items
+                // Tooltip-items (volgorde: verjaardag, feestdag, verlof)
+                if (bdays.length > 0) items.push({ kind: "birthday", names: bdays });
                 if (h) items.push({ kind: "holiday", name: h.name, subtype: h.type });
                 if (leaves.length > 0) items.push({ kind: "leave", people: leaves });
               }
@@ -242,6 +271,7 @@ function MonthCalendar({
                     position: "relative",
                     cursor: hasInfo ? "help" : "default",
                     transition: "box-shadow 120ms ease-in-out",
+                    boxShadow: boxShadowVal,
                     overflow: "hidden",
                   }}
                 >
@@ -262,6 +292,7 @@ function CalendarContent() {
 
   const [holidaysByDate, setHolidaysByDate] = useState<Record<string, HolidayInfo>>({});
   const [approvedByDate, setApprovedByDate] = useState<Record<string, LeavePerson[]>>({});
+  const [birthdaysByDate, setBirthdaysByDate] = useState<Record<string, string[]>>({});
 
   // Tooltip state
   const [tooltip, setTooltip] = useState<{
@@ -277,7 +308,7 @@ function CalendarContent() {
       const from = `${year}-01-01`;
       const to = `${year + 1}-01-01`;
 
-      // 1) Holidays (naam + type)
+      // 1) Holidays
       const { data: holidays, error: hErr } = await supabase
         .from("holidays")
         .select("holiday_date,name,type")
@@ -322,6 +353,34 @@ function CalendarContent() {
         }
         if (isMounted) setApprovedByDate(map);
       }
+
+      // 3) Verjaardagen (personnel.birthdate = 'ddmmjjjj')
+      const { data: persons, error: pErr } = await supabase
+        .from("personnel")
+        .select("name, birthdate");
+
+      if (pErr) {
+        console.error("[personnel fetch]", pErr);
+        if (isMounted) setBirthdaysByDate({});
+      } else {
+        const map: Record<string, string[]> = {};
+        for (const row of persons ?? []) {
+          const name = (row as any).name as string | null;
+          const bd = (row as any).birthdate as string | null;
+          if (!name || !bd || bd.length !== 8) continue; // verwacht ddmmjjjj
+          const dd = bd.slice(0, 2);
+          const mm = bd.slice(2, 4);
+
+          // simpele validatie
+          const dNum = Number(dd), mNum = Number(mm);
+          if (!(mNum >= 1 && mNum <= 12) || !(dNum >= 1 && dNum <= 31)) continue;
+
+          const key = `${year}-${mm}-${dd}`;
+          if (!map[key]) map[key] = [];
+          map[key].push(name);
+        }
+        if (isMounted) setBirthdaysByDate(map);
+      }
     }
 
     load();
@@ -341,22 +400,23 @@ function CalendarContent() {
   const prevYear = year - 1;
   const nextYear = year + 1;
 
-  return (
-    <>
-      <FloatingNav />
+return (
+  <>
+    <FloatingNav />
+    <LegendNavCalendar />   {/* rechtsboven */}
 
-      <main
-        style={{
-          background: COLORS.bg,
-          minHeight: "100vh",
-          padding: 24,
-          boxSizing: "border-box",
-          marginTop: `${FLOATING_NAV_OFFSET}px`,
-          position: "relative",
-        }}
-      >
-        {/* Toolbar midden */}
-        <header
+    <main
+      style={{
+        background: COLORS.bg,
+        minHeight: "100vh",
+        padding: 24,
+        boxSizing: "border-box",
+        marginTop: `${FLOATING_NAV_OFFSET}px`, // kleine afstand onder de nav
+        position: "relative",
+      }}
+    >
+      {/* Toolbar midden */}
+      <header
           style={{
             display: "flex",
             justifyContent: "center",
@@ -442,6 +502,7 @@ function CalendarContent() {
               month0={m}
               holidaysByDate={holidaysByDate}
               approvedByDate={approvedByDate}
+              birthdaysByDate={birthdaysByDate}
               onHover={handleHover}
             />
           ))}
@@ -466,6 +527,20 @@ function CalendarContent() {
           >
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {tooltip.items.map((it, idx) => {
+                if (it.kind === "birthday") {
+                  return (
+                    <div key={`b-${idx}`} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {it.names.map((nm, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <Cake size={16} strokeWidth={1.5} />
+                          <div style={{ fontSize: 13, color: COLORS.text }}>
+                            <strong>Verjaardag:</strong> {nm}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
                 if (it.kind === "holiday") {
                   const label = it.subtype === "public" ? "Feestdag" : "Schoolvakantie";
                   const Icon = it.subtype === "public" ? PartyPopper : School;

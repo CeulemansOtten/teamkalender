@@ -1,17 +1,18 @@
-"use client"
+"use client";
 
-import React, { useEffect, useMemo, useState, Suspense } from "react"
-import localFont from "next/font/local"
-import { useSearchParams } from "next/navigation"
-import { supabase } from "@/lib/supabaseClient"
-import FloatingNav from "../components/FloatingNav" // ✅ toegevoegd
+import React, { useEffect, useMemo, useState, Suspense } from "react";
+import localFont from "next/font/local";
+import { useSearchParams } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
+import FloatingNav from "../components/FloatingNav";
+import LegendNavVacationRequest from "../components/LegendNav_Vacation_Request";
 
-/* vaste marge onder FloatingNav */
-const FLOATING_NAV_OFFSET = 12
+/* ===== Basis UI ===== */
+const FLOATING_NAV_OFFSET = 5;
+const BUTTON_H = 42; // vaste hoogte voor knop én gesloten label
 
-// Fonts
-const monthFont = localFont({ src: "../fonts/Font_Variable.otf", display: "swap" })
-const titleFont = localFont({ src: "../fonts/Font_VariableBold.otf", display: "swap" })
+const monthFont = localFont({ src: "../fonts/Font_Variable.otf", display: "swap" });
+const titleFont = localFont({ src: "../fonts/Font_VariableBold.otf", display: "swap" });
 
 const COLORS = {
   bg: "#ffffff",
@@ -19,7 +20,7 @@ const COLORS = {
   line: "#e5e7eb",
   text: "#0f172a",
   textMuted: "#475569",
-  primary: "#0ea5a8",        // accentgroen
+  primary: "#0ea5a8",
   weekendBg: "#eef2f7",
   btnBg: "#ffffff",
   btnBorder: "#d1d5db",
@@ -28,16 +29,22 @@ const COLORS = {
   publicBg: "#FDE68A",
   dayHoverBg: "#FEE2E2",
   daySelectedBg: "#FECACA",
-  applyBorder: "#B91C1C",    // donkerrood voor "verlof aanvragen"
-}
+  applyBorder: "#B91C1C",
+  birthdateBg: "#FCE7F3",
+  birthdateBorder: "#F9A8D4",
+};
 
-// Zelfde kleur voor approved én requested-strepen
-const LEAVE_COLOR = "#C3E8E9"
-
+const LEAVE_COLOR = "#C3E8E9";
 const MONTHS_NL = [
   "januari","februari","maart","april","mei","juni","juli","augustus","september","oktober","november","december",
-]
-const DOW_NL = ["ma","di","wo","do","vr","za","zo"]
+];
+const DOW_NL = ["ma","di","wo","do","vr","za","zo"];
+
+/* ===== Constants voor saldo ===== */
+const HOURS_PER_FULL_DAY = 8;
+const HOURS_PER_HALF_DAY = 4;
+const SALDO_TO_DAYS_DIVISOR = 4;
+const SALDO_STATUSES = ["requested", "approved"] as const;
 
 /* ===== Icons ===== */
 function IconChevronLeft({ color = COLORS.primary, size = 22 }: { color?: string; size?: number }) {
@@ -46,7 +53,7 @@ function IconChevronLeft({ color = COLORS.primary, size = 22 }: { color?: string
       stroke={color} strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <polyline points="15 6 9 12 15 18" />
     </svg>
-  )
+  );
 }
 function IconChevronRight({ color = COLORS.primary, size = 22 }: { color?: string; size?: number }) {
   return (
@@ -54,70 +61,65 @@ function IconChevronRight({ color = COLORS.primary, size = 22 }: { color?: strin
       stroke={color} strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <polyline points="9 6 15 12 9 18" />
     </svg>
-  )
+  );
 }
 
 /* ===== Helpers ===== */
-function daysInMonth(year: number, month0: number) { return new Date(year, month0 + 1, 0).getDate() }
-function buildMonthMatrix(year: number, month0: number) {
-  const totalDays = daysInMonth(year, month0)
-  const firstDayIdxMonStart = (new Date(year, month0, 1).getDay() + 6) % 7
-  const cells: (number | null)[] = []
-  for (let i = 0; i < firstDayIdxMonStart; i++) cells.push(null)
-  for (let d = 1; d <= totalDays; d++) cells.push(d)
-  while (cells.length % 7 !== 0) cells.push(null)
-  const weeks: (number | null)[][] = []
-  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7))
-  return weeks
+function daysInMonth(y: number, m0: number) { return new Date(y, m0 + 1, 0).getDate(); }
+function buildMonthMatrix(y: number, m0: number) {
+  const total = daysInMonth(y, m0);
+  const firstIdx = (new Date(y, m0, 1).getDay() + 6) % 7; // maandag = 0
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstIdx; i++) cells.push(null);
+  for (let d = 1; d <= total; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks: (number | null)[][] = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
 }
-function pad2(n: number) { return n < 10 ? `0${n}` : `${n}` }
-function ymd(year: number, month0: number, day: number) { return `${year}-${pad2(month0 + 1)}-${pad2(day)}` }
+function pad2(n: number) { return n < 10 ? `0${n}` : `${n}`; }
+function ymd(y: number, m0: number, d: number) { return `${y}-${pad2(m0 + 1)}-${pad2(d)}`; }
 
-/* ===== 4-staps selectie (nieuwe aanvraag) ===== */
-type SelState = "none" | "full" | "am" | "pm"
-function nextState(s: SelState): SelState { return s === "none" ? "full" : s === "full" ? "am" : s === "am" ? "pm" : "none" }
+/* ===== Selectiestatus ===== */
+type SelState = "none" | "full" | "am" | "pm";
+function nextState(s: SelState): SelState { return s === "none" ? "full" : s === "full" ? "am" : s === "am" ? "pm" : "none"; }
 function nextBadge(s: SelState) {
-  const nx = nextState(s)
-  if (nx === "full") return "+"
-  if (nx === "am") return "VM"
-  if (nx === "pm") return "NM"
-  return "×"
+  const nx = nextState(s);
+  if (nx === "full") return "+";
+  if (nx === "am") return "VM";
+  if (nx === "pm") return "NM";
+  return "×";
 }
 
-/* ===== Bestaande leave overlay types ===== */
-type PartStatus = "requested" | "approved" | undefined
-type ExistingByDate = Record<string, { am?: PartStatus; pm?: PartStatus }>
+/* ===== Bestaande leave overlays ===== */
+type PartStatus = "requested" | "approved" | undefined;
+type ExistingByDate = Record<string, { am?: PartStatus; pm?: PartStatus }>;
 
-/* ===== Dag-cel ===== */
-type HoverMode = "interactive" | "x-only" | "none"
+/* ===== Dagcel ===== */
+type HoverMode = "interactive" | "x-only" | "none";
 
 function DayCell({
-  day, bg, label,
-  hoverMode,
-  state,
-  onCycle,
-  existing,
-  onXToggle,
-  withdrawSelected,
+  day, bg, label, hoverMode, state, onCycle, existing, isBirthday, birthdateConflict,
 }: {
-  day: number | null
-  bg: string
-  label?: string
-  hoverMode: HoverMode
-  state: SelState
-  onCycle?: () => void
-  existing?: { am?: PartStatus; pm?: PartStatus }
-  onXToggle?: () => void
-  withdrawSelected?: boolean
+  day: number | null;
+  bg: string;
+  label?: string;
+  hoverMode: HoverMode;
+  state: SelState;
+  onCycle?: () => void;
+  existing?: { am?: PartStatus; pm?: PartStatus };
+  isBirthday?: boolean;
+  birthdateConflict?: boolean;
 }) {
-  const [hover, setHover] = useState(false)
-  const isInteractive = hoverMode === "interactive"
-  const showHover = !!day && hoverMode !== "none"
+  const [hover, setHover] = useState(false);
+  const interactive = hoverMode === "interactive";
+  const showHover = !!day && hoverMode !== "none";
 
-  const hoverBg = isInteractive && hover && state === "none" && !existing ? COLORS.dayHoverBg : bg
+  const baseBg = isBirthday ? COLORS.birthdateBg : bg;
+  const hoverBg = interactive && hover && state === "none" && !existing ? COLORS.dayHoverBg : baseBg;
 
-  function renderOverlayHalf(which: "am" | "pm", status: PartStatus) {
-    const styleBase: React.CSSProperties = {
+  function overlayHalf(which: "am" | "pm", status: PartStatus) {
+    const st: React.CSSProperties = {
       position: "absolute",
       left: 0,
       right: 0,
@@ -125,49 +127,25 @@ function DayCell({
       background: "transparent",
       pointerEvents: "none",
       borderRadius: 8,
-    }
-    if (which === "am") Object.assign(styleBase, { top: 0, borderBottomLeftRadius: 0, borderBottomRightRadius: 0 })
-    if (which === "pm") Object.assign(styleBase, { bottom: 0, borderTopLeftRadius: 0, borderTopRightRadius: 0 })
-
-    if (status === "approved") {
-      styleBase.background = LEAVE_COLOR
-    } else if (status === "requested") {
-      styleBase.background = `repeating-linear-gradient(
-        45deg,
-        ${LEAVE_COLOR} 0,
-        ${LEAVE_COLOR} 8px,
-        #ffffff 8px,
-        #ffffff 16px
-      )`
-    } else {
-      return null
-    }
-    return <div key={`${which}-${status}`} style={styleBase} />
+    };
+    if (which === "am") Object.assign(st, { top: 0, borderBottomLeftRadius: 0, borderBottomRightRadius: 0 });
+    if (which === "pm") Object.assign(st, { bottom: 0, borderTopLeftRadius: 0, borderTopRightRadius: 0 });
+    if (status === "approved") st.background = LEAVE_COLOR;
+    else if (status === "requested") st.background = `repeating-linear-gradient(45deg, ${LEAVE_COLOR} 0, ${LEAVE_COLOR} 8px, #ffffff 8px, #ffffff 16px)`;
+    else return null;
+    return <div key={`${which}-${status}`} style={st} />;
   }
 
-  const showFullNew = state === "full" && !existing
-  const showAmNew  = state === "am" && !(existing && existing.am)
-  const showPmNew  = state === "pm" && !(existing && existing.pm)
+  const bothReq = existing?.am === "requested" && existing?.pm === "requested";
+  const bothApp = existing?.am === "approved" && existing?.pm === "approved";
 
-  const bothRequested = existing?.am === "requested" && existing?.pm === "requested"
-  const bothApproved  = existing?.am === "approved"  && existing?.pm === "approved"
+  const hasNew = state !== "none";
+  const hasExisting = !!(existing?.am || existing?.pm);
 
-  // --- Rand (altijd rond hele cel) ---
-  const hasNewSelection = state !== "none"
-  const hasExisting = !!(existing?.am || existing?.pm)
-
-  let borderColor = COLORS.line
-  let borderWidth = 1
-  if (hasNewSelection) {
-    borderColor = COLORS.applyBorder
-    borderWidth = 2
-  } else if (withdrawSelected) {
-    borderColor = COLORS.primary
-    borderWidth = 2
-  } else if (hasExisting) {
-    borderColor = COLORS.line
-    borderWidth = 1
-  }
+  let borderColor = COLORS.line;
+  let borderWidth = 1;
+  if (hasNew) { borderColor = COLORS.applyBorder; borderWidth = 2; }
+  else if (hasExisting) { borderColor = COLORS.line; borderWidth = 1; }
 
   return (
     <div
@@ -175,8 +153,8 @@ function DayCell({
       aria-label={label}
       onMouseEnter={() => showHover && setHover(true)}
       onMouseLeave={() => setHover(false)}
-      onClick={() => { if (isInteractive && day && onCycle) onCycle() }}
-      role={isInteractive ? "button" : undefined}
+      onClick={() => { if (interactive && day && onCycle) onCycle(); }}
+      role={interactive ? "button" : undefined}
       style={{
         position: "relative",
         height: 36,
@@ -190,67 +168,54 @@ function DayCell({
         color: "#000",
         opacity: day ? 1 : 0.55,
         userSelect: "none",
-        transition: "background 120ms ease-in-out, border-color 120ms ease-in-out",
-        cursor: isInteractive ? "pointer" : "default",
+        transition: "background 120ms ease, border-color 120ms ease",
+        cursor: interactive ? "pointer" : "default",
         overflow: "hidden",
       }}
     >
-      {/* Bestaande overlays — hele dag */}
-      {bothRequested && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            borderRadius: 8,
-            pointerEvents: "none",
-            background: `repeating-linear-gradient(
-              45deg,
-              ${LEAVE_COLOR} 0,
-              ${LEAVE_COLOR} 8px,
-              #ffffff 8px,
-              #ffffff 16px
-            )`,
-          }}
-        />
+      {bothReq && (
+        <div style={{
+          position: "absolute", inset: 0, borderRadius: 8, pointerEvents: "none",
+          background: `repeating-linear-gradient(45deg, ${LEAVE_COLOR} 0, ${LEAVE_COLOR} 8px, #ffffff 8px, #ffffff 16px)`,
+        }} />
       )}
-      {bothApproved && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            borderRadius: 8,
-            pointerEvents: "none",
-            background: LEAVE_COLOR,
-          }}
-        />
+      {bothApp && (
+        <div style={{ position: "absolute", inset: 0, borderRadius: 8, pointerEvents: "none", background: LEAVE_COLOR }} />
       )}
-
-      {/* Bestaande overlays — halve dag */}
-      {!bothRequested && !bothApproved && (
+      {!bothReq && !bothApp && (
         <>
-          {existing?.am && renderOverlayHalf("am", existing.am)}
-          {existing?.pm && renderOverlayHalf("pm", existing.pm)}
+          {existing?.am && overlayHalf("am", existing.am)}
+          {existing?.pm && overlayHalf("pm", existing.pm)}
         </>
       )}
 
-      {/* Nieuwe (lokale) selectie overlays */}
-      {showFullNew && (
+      {state === "full" && !existing && (
         <div style={{ position: "absolute", inset: 0, background: COLORS.daySelectedBg, borderRadius: 8, pointerEvents: "none" }} />
       )}
-      {showAmNew && (
+      {state === "am" && !(existing && existing.am) && (
         <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "50%", background: COLORS.daySelectedBg, borderTopLeftRadius: 8, borderTopRightRadius: 8, pointerEvents: "none" }} />
       )}
-      {showPmNew && (
+      {state === "pm" && !(existing && existing.pm) && (
         <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "50%", background: COLORS.daySelectedBg, borderBottomLeftRadius: 8, borderBottomRightRadius: 8, pointerEvents: "none" }} />
       )}
 
-      {/* dagnummer */}
-      <span style={{ position: "relative", zIndex: 3 }}>
-        {day ?? ""}
-      </span>
+      <span style={{ position: "relative", zIndex: 3 }}>{day ?? ""}</span>
 
-      {/* Hover-badge */}
-      {showHover && (
+      {isBirthday && birthdateConflict && (
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: 2,
+            borderRadius: 6,
+            border: `2px solid ${COLORS.birthdateBorder}`,
+            pointerEvents: "none",
+            zIndex: 3,
+          }}
+        />
+      )}
+
+      {showHover && interactive && (
         <button
           aria-hidden={!hover}
           tabIndex={-1}
@@ -264,52 +229,45 @@ function DayCell({
             boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
             opacity: hover ? 1 : 0,
             pointerEvents: hover ? "auto" : "none",
-            transition: "opacity 120ms ease-in-out, background 120ms ease-in-out",
+            transition: "opacity 120ms ease, background 120ms ease",
             cursor: "pointer",
             fontSize: 12, fontWeight: 800, color: COLORS.primary,
             zIndex: 4,
           }}
           onMouseEnter={(e) => (e.currentTarget.style.background = COLORS.btnHover)}
           onMouseLeave={(e) => (e.currentTarget.style.background = COLORS.btnBg)}
-          onClick={(e) => {
-            e.stopPropagation()
-            if (hoverMode === "x-only") {
-              onXToggle?.()
-            } else {
-              onCycle?.()
-            }
-          }}
+          onClick={(e) => { e.stopPropagation(); onCycle?.(); }}
         >
-          {hoverMode === "x-only" ? "×" : nextBadge(state)}
+          {nextBadge(state)}
         </button>
       )}
     </div>
-  )
+  );
 }
 
 /* ===== Maand ===== */
 function MonthCalendar({
   year, month0, holidayTypes, selections, onCycleDate, existingByDate,
-  withdrawSelections, onToggleWithdraw,
+  birthdateDD, birthdateMM, todayYMD,
 }: {
-  year: number
-  month0: number
-  holidayTypes: Record<string, "school" | "public">
-  selections: Record<string, SelState>
-  onCycleDate: (key: string) => void
-  existingByDate: ExistingByDate
-  withdrawSelections: Record<string, boolean>
-  onToggleWithdraw: (key: string) => void
+  year: number;
+  month0: number;
+  holidayTypes: Record<string, "school" | "public">;
+  selections: Record<string, SelState>;
+  onCycleDate: (key: string) => void;
+  existingByDate: ExistingByDate;
+  birthdateDD: string | null;
+  birthdateMM: string | null;
+  todayYMD: string;
 }) {
-  const weeks = buildMonthMatrix(year, month0)
-  const monthName = MONTHS_NL[month0]
+  const weeks = buildMonthMatrix(year, month0);
+  const monthName = MONTHS_NL[month0];
 
   return (
     <div style={{
       background: COLORS.card, border: `1px solid ${COLORS.line}`, borderRadius: 12, padding: 12,
       display: "flex", flexDirection: "column", gap: 8, minWidth: 260,
     }}>
-      {/* titel */}
       <div style={{ display: "grid", gridTemplateColumns: "8px 1fr", alignItems: "center", columnGap: 8 }}>
         <div style={{ width: 8, height: 24, background: COLORS.primary, borderRadius: 4 }} />
         <h3 className={monthFont.className} style={{ margin: 0, color: COLORS.text, fontSize: 18, fontWeight: 600, textTransform: "capitalize" }}>
@@ -317,7 +275,6 @@ function MonthCalendar({
         </h3>
       </div>
 
-      {/* weekdagen */}
       <div className={monthFont.className} style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, color: COLORS.textMuted, fontSize: 12, fontWeight: 600 }}>
         {DOW_NL.map((d, idx) => (
           <div key={d} style={{ textAlign: "center", padding: "6px 0", background: idx >= 5 ? COLORS.weekendBg : "transparent", borderRadius: 6 }}>
@@ -326,343 +283,457 @@ function MonthCalendar({
         ))}
       </div>
 
-      {/* kalender-cellen */}
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {weeks.map((week, wi) => (
           <div key={wi} style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
             {week.map((day, di) => {
-              const isWeekend = di === 5 || di === 6
-              let baseBg = "#fff"
-              let label: string | undefined
+              const isWeekend = di === 5 || di === 6;
+              if (!day) return <DayCell key={di} day={null} bg={"#fff"} hoverMode={"none"} state={"none"} />;
 
-              if (day) {
-                const key = ymd(year, month0, day)
-                const holidayType = holidayTypes[key]
-                if (holidayType === "school") {
-                  baseBg = COLORS.schoolBg
-                  label = "Schoolvakantie"
-                } else if (holidayType === "public") {
-                  baseBg = COLORS.publicBg
-                  label = "Officiële feestdag"
-                } else if (isWeekend) {
-                  baseBg = COLORS.weekendBg
-                }
+              const key = ymd(year, month0, day);
+              const isPast = key < todayYMD;
 
-                const existing = existingByDate[key]
-                const hasExisting = !!(existing?.am || existing?.pm)
-                const hoverMode: HoverMode =
-                  holidayType === "public" || isWeekend ? "none"
-                  : hasExisting ? "x-only"
-                  : "interactive"
+              const isBirthday =
+                !!birthdateDD && !!birthdateMM &&
+                pad2(day) === birthdateDD && pad2(month0 + 1) === birthdateMM;
 
-                const state: SelState = selections[key] ?? "none"
+              const holidayType = holidayTypes[key];
+              const hasExisting = !!(existingByDate[key]?.am || existingByDate[key]?.pm);
 
-                if (hasExisting) {
-                  const amTxt = existing?.am === "approved" ? "goedgekeurd" : existing?.am === "requested" ? "aangevraagd" : undefined
-                  const pmTxt = existing?.pm === "approved" ? "goedgekeurd" : existing?.pm === "requested" ? "aangevraagd" : undefined
-                  if (amTxt && pmTxt) label = `Voormiddag ${amTxt}, namiddag ${pmTxt}`
-                  else if (amTxt)     label = `Voormiddag ${amTxt}`
-                  else if (pmTxt)     label = `Namiddag ${pmTxt}`
-                }
+              let baseBg = "#fff";
+              if (isBirthday) baseBg = COLORS.birthdateBg;
+              else if (holidayType === "school") baseBg = COLORS.schoolBg;
+              else if (holidayType === "public") baseBg = COLORS.publicBg;
+              else if (isWeekend) baseBg = COLORS.weekendBg;
 
-                const withdrawSelected = !!withdrawSelections[key]
+              let hoverMode: HoverMode = "interactive";
+              if (isPast) hoverMode = "none";
+              else if (holidayType === "public" || isWeekend) hoverMode = "none";
+              else if (hasExisting) hoverMode = "x-only";
 
-                return (
-                  <DayCell
-                    key={di}
-                    day={day}
-                    bg={baseBg}
-                    label={label}
-                    hoverMode={hoverMode}
-                    state={state}
-                    existing={existing}
-                    onCycle={() => onCycleDate(key)}
-                    onXToggle={() => onToggleWithdraw(key)}
-                    withdrawSelected={withdrawSelected}
-                  />
-                )
+              const state: SelState = selections[key] ?? "none";
+              let label: string | undefined;
+              if (holidayType === "school") label = "Schoolvakantie";
+              if (holidayType === "public") label = "Officiële feestdag";
+              if (isBirthday) label = label ? `Verjaardag 🎂 • ${label}` : "Verjaardag 🎂";
+
+              const ex = existingByDate[key];
+              if (ex?.am || ex?.pm) {
+                const amTxt = ex?.am === "approved" ? "goedgekeurd" : ex?.am === "requested" ? "aangevraagd" : undefined;
+                const pmTxt = ex?.pm === "approved" ? "goedgekeurd" : ex?.pm === "requested" ? "aangevraagd" : undefined;
+                if (amTxt && pmTxt) label = (label ? label + " • " : "") + `VM ${amTxt}, NM ${pmTxt}`;
+                else if (amTxt)     label = (label ? label + " • " : "") + `VM ${amTxt}`;
+                else if (pmTxt)     label = (label ? label + " • " : "") + `NM ${pmTxt}`;
               }
 
-              // lege cel
+              const birthdateConflict = isBirthday && ((holidayType === "school" || holidayType === "public" || isWeekend) || hasExisting);
+
               return (
                 <DayCell
                   key={di}
-                  day={null}
-                  bg={"#fff"}
-                  label={undefined}
-                  hoverMode={"none"}
-                  state={"none"}
+                  day={day}
+                  bg={baseBg}
+                  label={label}
+                  hoverMode={hoverMode}
+                  state={state}
+                  existing={ex}
+                  onCycle={() => onCycleDate(key)}
+                  isBirthday={isBirthday}
+                  birthdateConflict={birthdateConflict}
                 />
-              )
+              );
             })}
           </div>
         ))}
       </div>
     </div>
-  )
+  );
 }
 
-/* ===== De eigenlijke pagina-inhoud (deze gebruikt useSearchParams) ===== */
+/* ===== Pagina ===== */
 function VacationRequestContent() {
-  const search = useSearchParams()
-  const personnelId = search.get("personnel_id")
+  const search = useSearchParams();
+  const personnelId = search.get("personnel_id");
 
-  const [year, setYear] = useState(2025)
-  const [personName, setPersonName] = useState<string>("…")
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
-  const [holidayTypes, setHolidayTypes] = useState<Record<string, "school" | "public">>({})
-  const [selections, setSelections] = useState<Record<string, SelState>>({})
-  const [existingByDate, setExistingByDate] = useState<ExistingByDate>({})
-  const [requesting, setRequesting] = useState(false)
+  const [year, setYear] = useState<number>(new Date().getFullYear());
+  const [personName, setPersonName] = useState<string>("…");
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [holidayTypes, setHolidayTypes] = useState<Record<string, "school" | "public">>({});
+  const [existingByDate, setExistingByDate] = useState<ExistingByDate>({});
+  const [selections, setSelections] = useState<Record<string, SelState>>({});
 
-  // Multi-select voor intrekken
-  const [withdrawSelections, setWithdrawSelections] = useState<Record<string, boolean>>({})
-  const [withdrawConfirm, setWithdrawConfirm] = useState(false)
-  const [withdrawing, setWithdrawing] = useState(false)
+  // Verjaardag
+  const [birthDM, setBirthDM] = useState<{ d: string | null; m: string | null }>({ d: null, m: null });
 
-  // Naam + avatar ophalen
+  // Entitlements UI open?
+  const [showEntitlements, setShowEntitlements] = useState(false);
+
+  // Verdeling (in "dagen" stapjes van 0.5)
+  type Alloc = { wettelijk: number; overuren: number; adv: number; andere: number; };
+  const [alloc, setAlloc] = useState<Alloc>({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 });
+
+  // Saldi per categorie — in "dagen" (na /4), mag negatief
+  const [balances, setBalances] = useState<Alloc>({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 });
+
+  // Loader voor opslaan
+  const [saving, setSaving] = useState(false);
+
+  // Vandaag (YYYY-MM-DD)
+  const todayYMD = useMemo(() => {
+    const t = new Date();
+    return ymd(t.getFullYear(), t.getMonth(), t.getDate());
+  }, []);
+
+  // Formatter (EU): enkel decimaal als nodig, met komma
+  const fmt1 = useMemo(
+    () => new Intl.NumberFormat("nl-BE", { minimumFractionDigits: 0, maximumFractionDigits: 1 }),
+    []
+  );
+
+  // Persoon
   useEffect(() => {
-    let active = true
+    let active = true;
     async function loadPerson() {
-      if (!personnelId) { setPersonName("Onbekend"); setAvatarUrl(null); return }
+      if (!personnelId) { setPersonName("Onbekend"); setAvatarUrl(null); setBirthDM({ d: null, m: null }); return; }
       const { data, error } = await supabase
         .from("personnel")
-        .select("name, avatar_url")
+        .select("name, avatar_url, birthdate")
         .eq("id", personnelId)
-        .single()
-      if (!active) return
-      if (error) {
-        setPersonName("Onbekend")
-        setAvatarUrl(null)
+        .single();
+      if (!active) return;
+      if (error || !data) {
+        setPersonName("Onbekend"); setAvatarUrl(null); setBirthDM({ d: null, m: null });
       } else {
-        setPersonName(data?.name || "Onbekend")
-        setAvatarUrl((data as any)?.avatar_url || null)
+        setPersonName(data.name || "Onbekend");
+        setAvatarUrl(data.avatar_url || null);
+        const b = (data as any).birthdate as string | null;
+        if (b && /^\d{8}$/.test(b)) setBirthDM({ d: b.slice(0,2), m: b.slice(2,4) });
+        else setBirthDM({ d: null, m: null });
       }
     }
-    loadPerson()
-    return () => { active = false }
-  }, [personnelId])
+    loadPerson();
+    return () => { active = false; };
+  }, [personnelId]);
 
-  // Holidays ophalen
+  // Feestdagen
   useEffect(() => {
-    let isMounted = true
+    let mounted = true;
     async function load() {
-      const from = `${year}-01-01`
-      const to = `${year + 1}-01-01`
+      const from = `${year}-01-01`;
+      const to = `${year + 1}-01-01`;
       const { data, error } = await supabase
         .from("holidays")
         .select("holiday_date,type")
         .gte("holiday_date", from)
-        .lt("holiday_date", to)
-
-      if (error) {
-        console.error("[holidays fetch]", error)
-        if (isMounted) setHolidayTypes({})
-        return
-      }
-
-      const map: Record<string, "school" | "public"> = {}
-      for (const row of (data ?? []) as any[]) {
-        if (row.type === "school" || row.type === "public") {
-          map[row.holiday_date as string] = row.type
-        }
-      }
-      if (isMounted) setHolidayTypes(map)
+        .lt("holiday_date", to);
+      if (error || !data) { if (mounted) setHolidayTypes({}); return; }
+      const map: Record<string, "school" | "public"> = {};
+      for (const r of data as any[]) if (r.type === "school" || r.type === "public") map[r.holiday_date as string] = r.type;
+      if (mounted) setHolidayTypes(map);
     }
-    load()
-    return () => { isMounted = false }
-  }, [year])
+    load();
+    return () => { mounted = false; };
+  }, [year]);
 
-  // Reset bevestigingsmodus als selectie leeg is
+  // Bestaande leaves (alleen tonen)
   useEffect(() => {
-    if (Object.keys(withdrawSelections).length === 0) {
-      setWithdrawConfirm(false)
-    }
-  }, [withdrawSelections])
-
-  // Bestaande leaves ophalen (requested + approved) voor dit jaar en persoon
-  async function fetchExisting() {
-    if (!personnelId) { setExistingByDate({}); return }
-    const from = `${year}-01-01`
-    const to = `${year + 1}-01-01`
-
-    const query = supabase
-      .from("leave_requests")
-      .select("leave_date,status,daypart")
-      .eq("personnel_id", personnelId)
-      .gte("leave_date", from)
-      .lt("leave_date", to)
-      .in("status", ["requested", "approved"])
-
-    let { data, error } = await query
-    if (error) {
-      const alt = await supabase
-        .from("leave_request")
+    let mounted = true;
+    async function load() {
+      if (!personnelId) { setExistingByDate({}); return; }
+      const from = `${year}-01-01`;
+      const to = `${year + 1}-01-01`;
+      const { data, error } = await supabase
+        .from("leave_requests")
         .select("leave_date,status,daypart")
         .eq("personnel_id", personnelId)
         .gte("leave_date", from)
         .lt("leave_date", to)
-        .in("status", ["requested", "approved"])
-      data = alt.data ?? null
-      error = alt.error ?? null
-    }
-    if (error) {
-      console.error("[leave(s) fetch]", error)
-      setExistingByDate({})
-      return
-    }
+        .in("status", ["requested", "approved"]);
+      if (error || !data) { if (mounted) setExistingByDate({}); return; }
 
-    const map: ExistingByDate = {}
-    const prefer = (prev: PartStatus, cur: PartStatus): PartStatus => {
-      if (prev === "approved" || cur === "approved") return "approved"
-      return prev || cur
-    }
+      const map: ExistingByDate = {};
+      const prefer = (prev: PartStatus, cur: PartStatus): PartStatus => (prev === "approved" || cur === "approved") ? "approved" : (prev || cur);
 
-    for (const row of data ?? []) {
-      const date = row.leave_date as string
-      const status = (row.status as string) === "approved" ? "approved" : "requested"
-      const part = (row.daypart as string) || "hele dag"
-      if (!map[date]) map[date] = {}
-
-      if (part === "hele dag") {
-        map[date].am = prefer(map[date].am, status)
-        map[date].pm = prefer(map[date].pm, status)
-      } else if (part === "voormiddag") {
-        map[date].am = prefer(map[date].am, status)
-      } else if (part === "namiddag") {
-        map[date].pm = prefer(map[date].pm, status)
+      for (const row of data) {
+        const date = (row as any).leave_date as string;
+        const status = (row as any).status === "approved" ? "approved" : "requested";
+        const part = (row as any).daypart || "hele dag";
+        if (!map[date]) map[date] = {};
+        if (part === "hele dag") { map[date].am = prefer(map[date].am, status); map[date].pm = prefer(map[date].pm, status); }
+        else if (part === "voormiddag") map[date].am = prefer(map[date].am, status);
+        else if (part === "namiddag")  map[date].pm = prefer(map[date].pm, status);
       }
+      if (mounted) setExistingByDate(map);
     }
-    setExistingByDate(map)
-  }
+    load();
+    return () => { mounted = false; };
+  }, [personnelId, year]);
 
-  useEffect(() => { fetchExisting() }, [personnelId, year])
+  // Saldo per categorie = entitlements.total_hours - som leave_requests (dagdelen), daarna /4 => dagen (mag < 0)
+  useEffect(() => {
+    let active = true;
+    async function loadBalances() {
+      if (!personnelId) { setBalances({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 }); return; }
 
-  // Nieuwe aanvragen: 4-staps cycle (alleen op dagen zonder bestaande leave)
-  const onCycleDate = (key: string) => {
-    if (existingByDate[key]?.am || existingByDate[key]?.pm) return
-    setSelections(prev => {
-      const cur = (prev[key] ?? "none") as SelState
-      const nx = nextState(cur)
-      const next = { ...prev }
-      if (nx === "none") delete next[key]
-      else next[key] = nx
-      return next
-    })
-  }
+      const from = `${year}-01-01`;
+      const to = `${year + 1}-01-01`;
 
-  // Toggle dag voor intrekken
-  const onToggleWithdraw = (key: string) => {
-    setWithdrawSelections(prev => {
-      const next = { ...prev }
-      if (next[key]) delete next[key]
-      else next[key] = true
-      return next
-    })
-  }
-
-  // Teller voor aanvragen (full=1, VM/NM=0.5)
-  const totalDays = useMemo(
-    () => Object.values(selections).reduce((sum, s) => sum + (s === "full" ? 1 : 0.5), 0),
-    [selections]
-  )
-  const totalDaysLabel = new Intl.NumberFormat("nl-BE", { minimumFractionDigits: 0, maximumFractionDigits: 1 }).format(totalDays)
-
-  // Teller voor intrekken (tel per halve dag wat effectief bestaat)
-  const withdrawTotal = useMemo(() => {
-    return Object.keys(withdrawSelections).reduce((sum, key) => {
-      const ex = existingByDate[key]
-      if (!ex) return sum
-      const halves = (ex.am ? 0.5 : 0) + (ex.pm ? 0.5 : 0)
-      return sum + halves
-    }, 0)
-  }, [withdrawSelections, existingByDate])
-  const withdrawTotalLabel = new Intl.NumberFormat("nl-BE", { minimumFractionDigits: 0, maximumFractionDigits: 1 }).format(withdrawTotal)
-
-  const prev = () => setYear((y) => y - 1)
-  const next = () => setYear((y) => y + 1)
-  const prevYear = year - 1
-  const nextYear = year + 1
-
-  // Aanvraag wegschrijven — zonder extra popup
-  const onRequestLeave = async () => {
-    const entries = Object.entries(selections)
-    if (!personnelId || entries.length === 0) return
-
-    try {
-      setRequesting(true)
-      const rows = entries.map(([d, state]) => ({
-        leave_date: d,
-        status: "requested",
-        personnel_id: personnelId,
-        daypart:
-          state === "full" ? "hele dag" :
-          state === "am"   ? "voormiddag" :
-                             "namiddag",
-      }))
-      const { error } = await supabase.from("leave_requests").insert(rows)
-      if (error) throw error
-      setSelections({})
-      await fetchExisting()
-    } catch (e: any) {
-      try {
-        const rows = Object.entries(selections).map(([d, state]) => ({
-          leave_date: d, status: "requested", personnel_id: personnelId,
-          daypart: state === "full" ? "hele dag" : state === "am" ? "voormiddag" : "namiddag",
-        }))
-        const { error: e2 } = await supabase.from("leave_request").insert(rows)
-        if (e2) throw e2
-        setSelections({})
-        await fetchExisting()
-      } catch (e3: any) {
-        console.error("Kon verlof niet aanvragen:", e3?.message ?? e3)
-      }
-    } finally {
-      setRequesting(false)
-    }
-  }
-
-  // Intrekken: status -> removed (multi-dagen) — zonder extra popup
-  const onWithdrawLeave = async () => {
-    const dates = Object.keys(withdrawSelections)
-    if (!personnelId || dates.length === 0) return
-    try {
-      setWithdrawing(true)
-      let { error } = await supabase
-        .from("leave_requests")
-        .update({ status: "removed" })
+      // 1) Totale rechten (in uren) per categorie
+      const { data: entData, error: entErr } = await supabase
+        .from("leave_entitlements")
+        .select("reason,total_hours,year")
         .eq("personnel_id", personnelId)
-        .in("leave_date", dates)
-        .in("status", ["requested", "approved"])
+        .eq("year", year);
 
-      if (error) {
-        const alt = await supabase
-          .from("leave_request")
-          .update({ status: "removed" })
-          .eq("personnel_id", personnelId)
-          .in("leave_date", dates)
-          .in("status", ["requested", "approved"])
-        error = alt.error ?? null
+      // 2) Gebruikte uren via leave_requests (requested + approved) dit jaar
+      const { data: reqData } = await supabase
+        .from("leave_requests")
+        .select("leave_date,daypart,status")
+        .eq("personnel_id", personnelId)
+        .gte("leave_date", from)
+        .lt("leave_date", to)
+        .in("status", SALDO_STATUSES as unknown as string[]);
+
+      if (!active) return;
+
+      if (entErr || !entData) { setBalances({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 }); return; }
+
+      // Som rechten per categorie (uren)
+      const totalsByReason = { wettelijk: 0, overuren: 0, adv: 0, andere: 0 } as Alloc;
+      for (const r of entData as any[]) {
+        const key = (String(r.reason || "").toLowerCase() as keyof Alloc) || "andere";
+        const hrs = Number(r.total_hours || 0);
+        if (key in totalsByReason) totalsByReason[key] += hrs;
+        else totalsByReason.andere += hrs;
       }
-      if (error) throw error
 
-      setWithdrawSelections({})
-      setWithdrawConfirm(false)
-      await fetchExisting()
-    } catch (e: any) {
-      console.error("Kon verlof niet intrekken:", e?.message ?? e)
+      // Som verbruikte uren over alle aanvragen (hele dag=8, VM/NM=4)
+      let usedHours = 0;
+      for (const rr of (reqData ?? []) as any[]) {
+        const dp = String(rr.daypart || "hele dag").toLowerCase();
+        if (dp === "hele dag") usedHours += HOURS_PER_FULL_DAY;
+        else usedHours += HOURS_PER_HALF_DAY; // "voormiddag" of "namiddag"
+      }
+
+      // Saldo per categorie (uren) -> dagen door /4  (geen clamp, mag negatief)
+      const toDays = (hrs: number) => Number(((hrs - usedHours) / SALDO_TO_DAYS_DIVISOR).toFixed(2));
+      setBalances({
+        wettelijk: toDays(totalsByReason.wettelijk),
+        overuren: toDays(totalsByReason.overuren),
+        adv:      toDays(totalsByReason.adv),
+        andere:   toDays(totalsByReason.andere),
+      });
+    }
+    loadBalances();
+    return () => { active = false; };
+  }, [personnelId, year]);
+
+  /* ===== Klik op een dag in de kalender (FIX) ===== */
+  const onCycleDate = (key: string) => {
+    if (key < todayYMD) return;
+    if (existingByDate[key]?.am || existingByDate[key]?.pm) return;
+    setSelections(prev => {
+      const cur = (prev[key] ?? "none") as SelState;
+      const nx = nextState(cur);
+      const next = { ...prev };
+      if (nx === "none") delete next[key];
+      else next[key] = nx;
+      return next;
+    });
+  };
+
+  // Totaal dagen uit de selectie (full = 1, VM/NM = 0.5)
+  const totalDays = useMemo(
+    () => Object.values(selections).reduce((s, st) => s + (st === "full" ? 1 : 0.5), 0),
+    [selections]
+  );
+  const totalLabel = useMemo(
+    () => new Intl.NumberFormat("nl-BE", { minimumFractionDigits: 0, maximumFractionDigits: 1 }).format(totalDays),
+    [totalDays]
+  );
+
+  // ===== Suggestie: verdeel totalDays -> wettelijk -> overuren -> adv -> andere =====
+  const snap05 = (x: number) => Math.floor(x * 2 + 1e-6) / 2; // naar beneden in 0,5
+  function suggestAllocation(total: number, bal: Alloc): Alloc {
+    let rem = snap05(total);
+    const cap = {
+      wettelijk: Math.max(0, snap05(bal.wettelijk)),
+      overuren:  Math.max(0, snap05(bal.overuren)),
+      adv:       Math.max(0, snap05(bal.adv)),
+      andere:    Math.max(0, snap05(bal.andere)),
+    };
+    const out: Alloc = { wettelijk: 0, overuren: 0, adv: 0, andere: 0 };
+
+    const take = (k: keyof Alloc) => {
+      const t = Math.min(rem, cap[k]);
+      out[k] = snap05(t);
+      rem = Number((rem - out[k]).toFixed(2));
+    };
+
+    take("wettelijk");
+    take("overuren");
+    take("adv");
+    if (rem > 0) { out.andere = snap05(rem); rem = 0; }
+    return out;
+  }
+
+  // Verdeling — som en resterend te verdelen
+  const sumAlloc = (a: Alloc) => a.wettelijk + a.overuren + a.adv + a.andere;
+  const remaining = useMemo(() => {
+    const r = Number((totalDays - sumAlloc(alloc)).toFixed(2));
+    return r < 0 ? 0 : r;
+  }, [totalDays, alloc]);
+
+  // Als panel dicht is en totaal verandert: zet alles tijdelijk op wettelijk (compacte “start”)
+  useEffect(() => {
+    if (!showEntitlements) {
+      setAlloc({ wettelijk: Number(totalDays.toFixed(2)), overuren: 0, adv: 0, andere: 0 });
+    }
+  }, [totalDays, showEntitlements]);
+
+  // Alles weggeklikt? -> reset UI
+  useEffect(() => {
+    if (totalDays === 0) {
+      setShowEntitlements(false);
+      setAlloc({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 });
+    }
+  }, [totalDays]);
+
+  const step = 0.5;
+  const canInc = remaining >= step;
+  const canDec = (k: keyof Alloc) => (alloc[k] >= step);
+
+  function inc(key: keyof Alloc) {
+    if (!canInc) return;
+    setAlloc(prev => ({ ...prev, [key]: Number((prev[key] + step).toFixed(2)) }));
+  }
+  function dec(key: keyof Alloc) {
+    if (!canDec(key)) return;
+    setAlloc(prev => ({ ...prev, [key]: Number((prev[key] - step).toFixed(2)) }));
+  }
+
+  // ===== Opslaan =====
+  function daypartFromState(s: SelState) {
+    return s === "full" ? "hele dag" : s === "am" ? "voormiddag" : "namiddag";
+  }
+  type K = keyof Alloc;
+  const ORDER: K[] = ["wettelijk", "overuren", "adv", "andere"];
+
+  async function onPrimaryButton() {
+    if (!personnelId) return;
+
+    if (!showEntitlements) {
+      // eerste klik -> open en stel startverdeling voor op basis van saldo
+      setAlloc(suggestAllocation(totalDays, balances));
+      setShowEntitlements(true);
+      return;
+    }
+
+    // tweede klik -> opslaan (alleen als verdeling klopt)
+    if (remaining !== 0 || totalDays <= 0) return;
+
+    // 1) Maak lijst entries (op datum oplopend)
+    const entries = Object.entries(selections)
+      .filter(([d]) => d >= todayYMD)
+      .map(([d, st]) => ({
+        leave_date: d,
+        size: st === "full" ? 1 : 0.5,
+        daypart: daypartFromState(st),
+      }))
+      .sort((a, b) => (a.leave_date < b.leave_date ? -1 : a.leave_date > b.leave_date ? 1 : 0));
+
+    if (entries.length === 0) return;
+
+    // 2) Verdeel entitlements over entries (eerst wettelijk, dan overuren, dan ADV, dan andere)
+    const avail: Alloc = { ...alloc };
+    let bucketIdx = 0;
+    const rows = entries.map(e => {
+      // zoek een pot waar minstens e.size in past; overslaan mag, negatief laten we toe als laatste redmiddel
+      let idx = bucketIdx;
+      while (idx < ORDER.length && (avail[ORDER[idx]] < e.size - 1e-9)) idx++;
+      if (idx >= ORDER.length) idx = ORDER.length - 1; // geen plek? -> laatste pot gebruiken (mag < 0)
+      bucketIdx = idx; // onthouden waar we zitten
+
+      const entKey = ORDER[idx];
+      avail[entKey] = Number((avail[entKey] - e.size).toFixed(2));
+
+      return {
+        leave_date: e.leave_date,
+        status: "requested" as const,
+        personnel_id: personnelId,
+        daypart: e.daypart,
+        entitlement: entKey, // <= belangrijk
+      };
+    });
+
+    setSaving(true);
+    try {
+      let { error } = await supabase.from("leave_requests").insert(rows);
+      if (error) {
+        // fallback alternatieve tabelnaam
+        const alt = await supabase.from("leave_request").insert(rows);
+        if (alt.error) throw alt.error;
+      }
+
+      // UI reset & data verversen
+      setSelections({});
+      setShowEntitlements(false);
+      setAlloc({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 });
+
+      // overlays herladen
+      const from = `${year}-01-01`;
+      const to = `${year + 1}-01-01`;
+      const { data } = await supabase
+        .from("leave_requests")
+        .select("leave_date,status,daypart")
+        .eq("personnel_id", personnelId)
+        .gte("leave_date", from)
+        .lt("leave_date", to)
+        .in("status", ["requested", "approved"]);
+      const map: ExistingByDate = {};
+      const prefer = (p: PartStatus, c: PartStatus): PartStatus => (p === "approved" || c === "approved") ? "approved" : (p || c);
+      for (const row of data ?? []) {
+        const date = (row as any).leave_date as string;
+        const status = (row as any).status === "approved" ? "approved" : "requested";
+        const part = (row as any).daypart || "hele dag";
+        if (!map[date]) map[date] = {};
+        if (part === "hele dag") { map[date].am = prefer(map[date].am, status); map[date].pm = prefer(map[date].pm, status); }
+        else if (part === "voormiddag") map[date].am = prefer(map[date].am, status);
+        else if (part === "namiddag")  map[date].pm = prefer(map[date].pm, status);
+      }
+      setExistingByDate(map);
+
+      
+    } catch (err: any) {
+      console.error("Opslaan mislukt:", err?.message ?? err);
+      alert("Opslaan mislukt. Kijk de console (F12) voor details.");
     } finally {
-      setWithdrawing(false)
+      setSaving(false);
     }
   }
 
-  const selectionBarVisible = Object.keys(selections).length > 0
-  const withdrawBarVisible = Object.keys(withdrawSelections).length > 0
+  const prevYear = () => setYear(y => y - 1);
+  const nextYear = () => setYear(y => y + 1);
+
+  // Stijl helper voor grijze (disabled) pijltjes
+  function ctrlBtnStyle(disabled: boolean): React.CSSProperties {
+    return {
+      width: 28,
+      height: 28,
+      borderRadius: 999,
+      border: `1px solid ${disabled ? COLORS.line : COLORS.btnBorder}`,
+      background: disabled ? COLORS.btnHover : COLORS.btnBg,
+      color: disabled ? COLORS.textMuted : "inherit",
+      cursor: disabled ? "default" : "pointer",
+      fontWeight: 800,
+      opacity: disabled ? 0.6 : 1,
+    };
+  }
 
   return (
     <>
       <FloatingNav />
-
+      <LegendNavVacationRequest />
       <main
         style={{
           background: COLORS.bg,
@@ -683,8 +754,8 @@ function VacationRequestContent() {
           }}
         >
           <button
-            onClick={prev}
-            aria-label={`Ga naar ${prevYear}`}
+            onClick={prevYear}
+            aria-label="Ga naar vorig jaar"
             className={titleFont.className}
             style={{
               padding: "8px 14px",
@@ -700,13 +771,13 @@ function VacationRequestContent() {
               fontWeight: 900,
               fontSize: 18,
               letterSpacing: 0.2,
-              transition: "background 120ms ease-in-out",
+              transition: "background 120ms ease",
             }}
             onMouseOver={(e) => (e.currentTarget.style.background = COLORS.btnHover)}
             onMouseOut={(e) => (e.currentTarget.style.background = COLORS.btnBg)}
           >
             <IconChevronLeft />
-            <span>{prevYear}</span>
+            <span>{year - 1}</span>
           </button>
 
           <h1
@@ -725,17 +796,13 @@ function VacationRequestContent() {
             <span>Persoonlijke kalender van</span>
             <span>{personName}</span>
             {avatarUrl && (
-              <img
-                src={avatarUrl}
-                alt={personName}
-                style={{ height: "1em", width: "1em" }}
-              />
+              <img src={avatarUrl} alt={personName} style={{ height: "1em", width: "1em", borderRadius: "50%" }} />
             )}
           </h1>
 
           <button
-            onClick={next}
-            aria-label={`Ga naar ${nextYear}`}
+            onClick={nextYear}
+            aria-label="Ga naar volgend jaar"
             className={titleFont.className}
             style={{
               padding: "8px 14px",
@@ -751,17 +818,17 @@ function VacationRequestContent() {
               fontWeight: 900,
               fontSize: 18,
               letterSpacing: 0.2,
-              transition: "background 120ms ease-in-out",
+              transition: "background 120ms ease",
             }}
             onMouseOver={(e) => (e.currentTarget.style.background = COLORS.btnHover)}
             onMouseOut={(e) => (e.currentTarget.style.background = COLORS.btnBg)}
           >
-            <span>{nextYear}</span>
+            <span>{year + 1}</span>
             <IconChevronRight />
           </button>
         </header>
 
-        {/* 4 kolommen × 3 rijen */}
+        {/* 12 maanden */}
         <section style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(240px, 1fr))", gap: 16 }}>
           {Array.from({ length: 12 }).map((_, m) => (
             <MonthCalendar
@@ -772,185 +839,187 @@ function VacationRequestContent() {
               selections={selections}
               onCycleDate={onCycleDate}
               existingByDate={existingByDate}
-              withdrawSelections={withdrawSelections}
-              onToggleWithdraw={onToggleWithdraw}
+              birthdateDD={birthDM.d}
+              birthdateMM={birthDM.m}
+              todayYMD={todayYMD}
             />
           ))}
         </section>
 
-        {/* Verlof aanvragen bar */}
-        {selectionBarVisible && (
+        {/* ===== Rechts onderaan: label + vaste knop ===== */}
+        {totalDays > 0 && (
           <div
             style={{
               position: "fixed",
               right: 24,
               bottom: 24,
-              display: "flex",
-              alignItems: "center",
+              display: "inline-flex",
+              alignItems: "flex-end", // knop blijft onderaan
               gap: 12,
-              background: "#fff",
-              border: `1px solid ${COLORS.line}`,
-              borderRadius: 999,
-              padding: "10px 14px",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
               zIndex: 9999,
             }}
           >
-            <span
-              className={titleFont.className}
-              style={{ color: COLORS.text, fontSize: 14, fontWeight: 800, position: "relative", zIndex: 2 }}
-            >
-              {new Intl.NumberFormat("nl-BE", { maximumFractionDigits: 1 }).format(totalDays)} dag{totalDays === 1 ? "" : "en"} geselecteerd
-            </span>
-
-            <button
-              onClick={onRequestLeave}
-              disabled={requesting || !personnelId}
+            {/* LABEL — gesloten even hoog als knop, open groeit naar links/omhoog */}
+            <div
               className={titleFont.className}
               style={{
-                padding: "10px 14px",
-                background: requesting || !personnelId ? "#94d6d7" : COLORS.primary,
+                background: "#fff",
+                border: `1px solid ${COLORS.line}`,
+                borderRadius: 16,
+                boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                height: showEntitlements ? ("auto" as const) : BUTTON_H,
+                padding: showEntitlements ? "14px 16px" : "0 16px",
+                minWidth: 180,
+                maxWidth: showEntitlements ? 420 : 280,
+                transition: "max-width 200ms ease, padding 200ms ease, height 150ms ease",
+                overflow: "hidden",
+                order: 0, // links van de knop
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+              }}
+            >
+              {/* Kop (altijd zichtbaar) — zelfde hoogte als knop wanneer gesloten */}
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                minHeight: BUTTON_H,
+              }}>
+                <div style={{ width: 8, height: 16, background: COLORS.primary, borderRadius: 4 }} />
+                <span style={{ fontWeight: 800, color: COLORS.text, fontSize: 14 }}>
+                  {totalLabel} dag{totalDays === 1 ? "" : "en"} geselecteerd
+                </span>
+              </div>
+
+              {/* Verdelen + saldo (in dagen) */}
+              <div
+                style={{
+                  height: showEntitlements ? "auto" : 0,
+                  opacity: showEntitlements ? 1 : 0,
+                  marginTop: showEntitlements ? 8 : 0,
+                  transition: "opacity 200ms ease, height 200ms ease, margin-top 200ms ease",
+                }}
+                aria-hidden={!showEntitlements}
+              >
+                {[
+                  ["wettelijk", "Wettelijk"] as const,
+                  ["overuren", "Overuren"] as const,
+                  ["adv", "ADV"] as const,
+                  ["andere", "Andere"] as const,
+                ].map(([key, label]) => {
+                  type KK = keyof Alloc;
+                  const k = key as KK;
+                  const disableDec = !(alloc[k] >= 0.5);
+                  const disableInc = !(remaining >= 0.5);
+                  return (
+                    <div key={key} style={{ padding: "6px 0" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 14, color: COLORS.text }}>{label}</span>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                          <button
+                            onClick={() => !disableDec && dec(k)}
+                            disabled={disableDec}
+                            style={ctrlBtnStyle(disableDec)}
+                            aria-label={`Verlaag ${label} met 0,5`}
+                            onMouseOver={(e) => { if (!disableDec) e.currentTarget.style.background = COLORS.btnHover; }}
+                            onMouseOut={(e) => { if (!disableDec) e.currentTarget.style.background = COLORS.btnBg; }}
+                          >
+                            ‹
+                          </button>
+                          <div
+                            style={{
+                              minWidth: 54,
+                              textAlign: "center",
+                              fontVariantNumeric: "tabular-nums",
+                              padding: "6px 10px",
+                              border: `1px solid ${COLORS.line}`,
+                              borderRadius: 10,
+                              background: COLORS.card,
+                              fontWeight: 800,
+                            }}
+                            aria-label={`${label} aantal`}
+                          >
+                            {fmt1.format((alloc as any)[key] as number)}
+                          </div>
+                          <button
+                            onClick={() => !disableInc && inc(k)}
+                            disabled={disableInc}
+                            style={ctrlBtnStyle(disableInc)}
+                            aria-label={`Verhoog ${label} met 0,5`}
+                            onMouseOver={(e) => { if (!disableInc) e.currentTarget.style.background = COLORS.btnHover; }}
+                            onMouseOut={(e) => { if (!disableInc) e.currentTarget.style.background = COLORS.btnBg; }}
+                          >
+                            ›
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Saldo (in dagen, EU-notatie, mag negatief) */}
+                      <div style={{ gridColumn: "1 / -1", fontSize: 12, color: COLORS.textMuted, marginTop: 4 }}>
+                        Huidige saldo: {fmt1.format((balances as any)[key] as number)} dag
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Rest te verdelen / OK */}
+                <div style={{ marginTop: 6, fontSize: 12 }}>
+                  {remaining === 0 ? (
+                    <span style={{ color: COLORS.primary, fontWeight: 800 }}>✔ Alles is netjes verdeeld.</span>
+                  ) : (
+                    <span style={{ color: COLORS.applyBorder, fontWeight: 800 }}>
+                      Nog {fmt1.format(remaining)} te verdelen.
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* KNOP (blijft vast rechts onderaan; vaste hoogte) */}
+            <button
+              onClick={onPrimaryButton}
+              disabled={saving || totalDays <= 0 || (showEntitlements && remaining !== 0)}
+              className={titleFont.className}
+              style={{
+                height: BUTTON_H,
+                padding: "0 16px",
+                background: saving || totalDays <= 0 || (showEntitlements && remaining !== 0) ? "#94d6d7" : COLORS.primary,
                 color: "#fff",
                 border: "none",
                 borderRadius: 999,
-                cursor: requesting || !personnelId ? "not-allowed" : "pointer",
+                cursor: saving || totalDays <= 0 || (showEntitlements && remaining !== 0) ? "not-allowed" : "pointer",
                 fontWeight: 900,
                 fontSize: 14,
                 letterSpacing: 0.2,
-                minWidth: 140,
-                position: "relative",
-                zIndex: 2,
+                minWidth: 180,
+                alignSelf: "flex-end",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "background 120ms ease",
+                order: 1,
               }}
-              title={!personnelId ? "Geen personnel_id in de URL" : undefined}
+              title={showEntitlements && remaining !== 0 ? "Verdeel eerst al je dagen" : undefined}
             >
-              {requesting ? "Aanvragen…" : "Verlof aanvragen"}
+              {saving ? "Bezig…" : (showEntitlements ? "Aanvraag doorsturen" : "Verlof aanvragen")}
             </button>
           </div>
         )}
-
-        {/* Verlof intrekken bar */}
-        {Object.keys(withdrawSelections).length > 0 && (
-          <div
-            style={{
-              position: "fixed",
-              right: 24,
-              bottom: selectionBarVisible ? 92 : 24,
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              background: "#fff",
-              border: `1px solid ${COLORS.line}`,
-              borderRadius: 999,
-              padding: "10px 14px",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-              zIndex: 10000,
-            }}
-          >
-            { /* 2-staps bevestiging */ }
-            {withdrawConfirm ? (
-              <>
-                <span className={titleFont.className} style={{ color: COLORS.text, fontSize: 14, fontWeight: 800 }}>
-                  Zeker dat je je verlof wil intrekken?
-                </span>
-                <button
-                  onClick={() => setWithdrawConfirm(false)}
-                  className={titleFont.className}
-                  style={{
-                    padding: "10px 14px",
-                    background: COLORS.btnBg,
-                    border: `1px solid ${COLORS.btnBorder}`,
-                    borderRadius: 999,
-                    cursor: "pointer",
-                    fontWeight: 800,
-                    fontSize: 14,
-                    letterSpacing: 0.2,
-                    minWidth: 80,
-                  }}
-                >
-                  Neen
-                </button>
-                <button
-                  onClick={onWithdrawLeave}
-                  disabled={withdrawing}
-                  className={titleFont.className}
-                  style={{
-                    padding: "10px 14px",
-                    background: withdrawing ? "#94d6d7" : COLORS.primary,
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 999,
-                    cursor: withdrawing ? "not-allowed" : "pointer",
-                    fontWeight: 900,
-                    fontSize: 14,
-                    letterSpacing: 0.2,
-                    minWidth: 180,
-                  }}
-                >
-                  {withdrawing ? "Bezig…" : "Ja, verlof intrekken"}
-                </button>
-              </>
-            ) : (
-              <>
-                <span className={titleFont.className} style={{ color: COLORS.text, fontSize: 14, fontWeight: 800 }}>
-                  {new Intl.NumberFormat("nl-BE", { maximumFractionDigits: 1 }).format(
-                    Object.keys(withdrawSelections).reduce((sum, k) => {
-                      const ex = existingByDate[k]; if (!ex) return sum
-                      return sum + (ex.am ? 0.5 : 0) + (ex.pm ? 0.5 : 0)
-                    }, 0)
-                  )} dagen geselecteerd om in te trekken
-                </span>
-                <button
-                  onClick={() => setWithdrawSelections({})}
-                  className={titleFont.className}
-                  style={{
-                    padding: "10px 14px",
-                    background: COLORS.btnBg,
-                    border: `1px solid ${COLORS.btnBorder}`,
-                    borderRadius: 999,
-                    cursor: "pointer",
-                    fontWeight: 800,
-                    fontSize: 14,
-                    letterSpacing: 0.2,
-                    minWidth: 80,
-                  }}
-                >
-                  Neen
-                </button>
-                <button
-                  onClick={() => setWithdrawConfirm(true)}
-                  className={titleFont.className}
-                  style={{
-                    padding: "10px 14px",
-                    background: COLORS.primary,
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 999,
-                    cursor: "pointer",
-                    fontWeight: 900,
-                    fontSize: 14,
-                    letterSpacing: 0.2,
-                    minWidth: 140,
-                  }}
-                >
-                  Verlof intrekken
-                </button>
-              </>
-            )}
-          </div>
-        )}
+        <div style={{ minHeight: "50px" }}>
+</div>
       </main>
     </>
-  )
+  );
 }
 
-/* ===== Suspense-wrapper voor de pagina ===== */
+/* ===== Suspense wrapper ===== */
 export default function Page() {
   return (
     <Suspense fallback={<div style={{ padding: 12 }}>Laden…</div>}>
       <VacationRequestContent />
     </Suspense>
-  )
+  );
 }
 
-/* Dit voorkomt dat Next probeert te prerenderen als SSG terwijl we searchParams gebruiken */
-export const dynamic = "force-dynamic"
+export const dynamic = "force-dynamic";
