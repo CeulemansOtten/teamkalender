@@ -5,10 +5,10 @@ import localFont from "next/font/local";
 import { supabase } from "@/lib/supabaseClient";
 import FloatingNav from "../components/FloatingNav";
 import LegendNavCalendar from "../components/LegendNav_Calendar";
-import { School, PartyPopper, Cake } from "lucide-react";   // Lucide iconen
+import { School, PartyPopper, Cake } from "lucide-react"; // Lucide iconen
 
 /* Vaste offset onder FloatingNav */
-const FLOATING_NAV_OFFSET = 5
+const FLOATING_NAV_OFFSET = 5;
 
 // Fonts enkel op deze pagina laden
 const monthFont = localFont({ src: "../fonts/Font_Variable.otf", display: "swap" });
@@ -28,7 +28,8 @@ const COLORS = {
   schoolBg: "#FFF9C4",
   publicBg: "#FDE68A",
   approvedBg: "#C3E8E9",
-  birthdayBg: "#FCE7F3", // zachte roze tint (gevraagd)
+  birthdayBg: "#FCE7F3",     // zachte roze tint
+  jewishBg: "#DBEAFE",       // zachte blauw-tint voor Joodse feestdagen
 };
 
 // Breedte van de strepen (px) – we gebruiken GEEN streepjes als er verjaardag is
@@ -58,6 +59,27 @@ function IconChevronRight({ color = COLORS.primary, size = 22 }: { color?: strin
   );
 }
 
+/* ===== Davidster-icoon voor Joodse feestdagen ===== */
+function IconStarOfDavid({ size = 16, color = COLORS.text }: { size?: number; color?: string }) {
+  // Simpele Davidster (twee over elkaar geplaatste driehoeken)
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      aria-hidden
+      fill="none"
+      stroke={color}
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 3 L4 17 H20 Z" />
+      <path d="M12 21 L4 7 H20 Z" />
+    </svg>
+  );
+}
+
 /* ===== Helpers ===== */
 function daysInMonth(year: number, month0: number) {
   return new Date(year, month0 + 1, 0).getDate();
@@ -79,10 +101,11 @@ function ymd(year: number, month0: number, day: number) {
 }
 
 /* ===== Types ===== */
-type HolidayInfo = { type: "school" | "public"; name: string };
+type HolidayType = "school" | "public" | "jewish";
+type HolidayInfo = { type: HolidayType; name: string };
 type LeavePerson = { name: string; avatar_url: string | null };
 type TooltipItem =
-  | { kind: "holiday"; name: string; subtype: "school" | "public" }
+  | { kind: "holiday"; name: string; subtype: HolidayType }
   | { kind: "leave"; people: LeavePerson[] }
   | { kind: "birthday"; names: string[] };
 
@@ -104,6 +127,14 @@ function MonthCalendar({
 }) {
   const weeks = buildMonthMatrix(year, month0);
   const monthName = MONTHS_NL[month0];
+
+  const getHolidayColor = (h?: HolidayInfo | null) => {
+    if (!h) return null;
+    if (h.type === "public") return COLORS.publicBg;
+    if (h.type === "school") return COLORS.schoolBg;
+    if (h.type === "jewish") return COLORS.jewishBg;
+    return null;
+  };
 
   return (
     <div
@@ -163,7 +194,7 @@ function MonthCalendar({
             {week.map((day, di) => {
               const isWeekend = di === 5 || di === 6;
 
-              // We gebruiken alléén losse background-* props (geen shorthand)
+              // Alleen losse background-* props
               let backgroundColor = "#fff";
               let backgroundImage: string | "none" = "none";
               let backgroundRepeat: "repeat" | "no-repeat" = "no-repeat";
@@ -179,10 +210,7 @@ function MonthCalendar({
                 const leaves = approvedByDate[key] || [];
                 const bdays = birthdaysByDate[key] || [];
 
-                const holidayColor =
-                  h?.type === "public" ? COLORS.publicBg :
-                  h?.type === "school" ? COLORS.schoolBg :
-                  null;
+                const holidayColor = getHolidayColor(h);
 
                 const hasHoliday = !!holidayColor;
                 const hasLeave = leaves.length > 0;
@@ -190,33 +218,20 @@ function MonthCalendar({
 
                 // ===== Achtergrondregels (nooit streepjes als er verjaardag is) =====
                 if (hasBirthday) {
-                  // Verjaardag alleen
                   if (!hasHoliday && !hasLeave) {
                     backgroundColor = COLORS.birthdayBg;
-                    // subtiele ring is hier optioneel; we houden het clean zonder ring
                     boxShadowVal = "none";
-                  }
-                  // Verjaardag + feestdag (zonder verlof)
-                  else if (hasHoliday && !hasLeave) {
+                  } else if (hasHoliday && !hasLeave) {
                     backgroundColor = holidayColor!;
-                    backgroundImage = "none";
-                    boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`; // roze ring
-                  }
-                  // Verjaardag + verlof (zonder feestdag)
-                  else if (!hasHoliday && hasLeave) {
+                    boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`;
+                  } else if (!hasHoliday && hasLeave) {
                     backgroundColor = COLORS.approvedBg;
-                    backgroundImage = "none";
-                    boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`; // roze ring
-                  }
-                  // Verjaardag + feestdag + verlof
-                  else if (hasHoliday && hasLeave) {
-                    // geen streepjes: we kiezen een neutrale basis (approved) + roze ring
+                    boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`;
+                  } else if (hasHoliday && hasLeave) {
                     backgroundColor = COLORS.approvedBg;
-                    backgroundImage = "none";
-                    boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`; // roze ring
+                    boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`;
                   }
                 } else {
-                  // GEEN verjaardag → behoud je huidige logica, inclusief streepjes voor holiday+leave
                   if (hasHoliday && hasLeave) {
                     backgroundColor = COLORS.approvedBg;
                     backgroundImage = `repeating-linear-gradient(
@@ -269,7 +284,7 @@ function MonthCalendar({
                     color: day ? COLORS.text : COLORS.textMuted,
                     opacity: day ? 1 : 0.55,
                     position: "relative",
-                    cursor: hasInfo ? "help" : "default",
+                    cursor: hasInfo ? "default" : "default",
                     transition: "box-shadow 120ms ease-in-out",
                     boxShadow: boxShadowVal,
                     overflow: "hidden",
@@ -308,7 +323,7 @@ function CalendarContent() {
       const from = `${year}-01-01`;
       const to = `${year + 1}-01-01`;
 
-      // 1) Holidays
+      // 1) Holidays (inclusief jewish)
       const { data: holidays, error: hErr } = await supabase
         .from("holidays")
         .select("holiday_date,name,type")
@@ -321,11 +336,16 @@ function CalendarContent() {
       } else {
         const map: Record<string, HolidayInfo> = {};
         for (const row of holidays ?? []) {
-          if (row.type !== "school" && row.type !== "public") continue;
-          const date = row.holiday_date as string;
+          const t = (row as any).type as string | null;
+          if (t !== "school" && t !== "public" && t !== "jewish") continue; // neem school/public/jewish
+          const date = (row as any).holiday_date as string;
+          const info: HolidayInfo = { type: t as HolidayType, name: (row as any).name as string };
+
+          // Prioriteit: public > jewish > school
           const current = map[date];
-          if (!current || row.type === "public" || current.type !== "public") {
-            map[date] = { type: row.type, name: row.name as string };
+          const rank = (ty: HolidayType) => (ty === "public" ? 3 : ty === "jewish" ? 2 : 1);
+          if (!current || rank(info.type) >= rank(current.type)) {
+            map[date] = info;
           }
         }
         if (isMounted) setHolidaysByDate(map);
@@ -371,7 +391,6 @@ function CalendarContent() {
           const dd = bd.slice(0, 2);
           const mm = bd.slice(2, 4);
 
-          // simpele validatie
           const dNum = Number(dd), mNum = Number(mm);
           if (!(mNum >= 1 && mNum <= 12) || !(dNum >= 1 && dNum <= 31)) continue;
 
@@ -400,23 +419,23 @@ function CalendarContent() {
   const prevYear = year - 1;
   const nextYear = year + 1;
 
-return (
-  <>
-    <FloatingNav />
-    <LegendNavCalendar />   {/* rechtsboven */}
+  return (
+    <>
+      <FloatingNav />
+      <LegendNavCalendar />   {/* rechtsboven */}
 
-    <main
-      style={{
-        background: COLORS.bg,
-        minHeight: "100vh",
-        padding: 24,
-        boxSizing: "border-box",
-        marginTop: `${FLOATING_NAV_OFFSET}px`, // kleine afstand onder de nav
-        position: "relative",
-      }}
-    >
-      {/* Toolbar midden */}
-      <header
+      <main
+        style={{
+          background: COLORS.bg,
+          minHeight: "100vh",
+          padding: 24,
+          boxSizing: "border-box",
+          marginTop: `${FLOATING_NAV_OFFSET}px`,
+          position: "relative",
+        }}
+      >
+        {/* Toolbar midden */}
+        <header
           style={{
             display: "flex",
             justifyContent: "center",
@@ -508,6 +527,9 @@ return (
           ))}
         </section>
 
+        {/* extra witruimte onderaan om te kunnen scrollen */}
+<div style={{ height: 200 }} aria-hidden />
+
         {/* Tooltip */}
         {tooltip && (
           <div
@@ -542,11 +564,18 @@ return (
                   );
                 }
                 if (it.kind === "holiday") {
-                  const label = it.subtype === "public" ? "Feestdag" : "Schoolvakantie";
-                  const Icon = it.subtype === "public" ? PartyPopper : School;
+                  let label = "Feestdag";
+                  let iconEl: React.ReactNode = <PartyPopper size={16} strokeWidth={1.5} />;
+                  if (it.subtype === "school") {
+                    label = "Schoolvakantie";
+                    iconEl = <School size={16} strokeWidth={1.5} />;
+                  } else if (it.subtype === "jewish") {
+                    label = "Joodse feestdag";
+                    iconEl = <IconStarOfDavid size={16} color={COLORS.text} />;
+                  }
                   return (
                     <div key={`h-${idx}`} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <Icon size={16} strokeWidth={1.5} />
+                      {iconEl}
                       <div style={{ fontSize: 13, color: COLORS.text }}>
                         <strong>{label}:</strong> {it.name}
                       </div>
@@ -560,42 +589,53 @@ return (
                       <strong>Verlof:</strong>
                     </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      {it.people.map((p, i) => (
-                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          {p.avatar_url ? (
-                            <img
-                              src={p.avatar_url}
-                              alt={p.name}
-                              style={{
-                                width: 25,
-                                height: 25,
-                                objectFit: "contain",
-                                background: "#fff",
-                                flex: "0 0 auto",
-                              }}
-                            />
-                          ) : (
-                            <div
-                              aria-hidden
-                              style={{
-                                width: 20,
-                                height: 20,
-                                border: "1px solid #e5e7eb",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                fontSize: 11,
-                                background: "#f5f5f5",
-                                color: "#555",
-                                flex: "0 0 auto",
-                              }}
-                            >
-                              {p.name?.[0]?.toUpperCase() ?? "?"}
-                            </div>
-                          )}
-                          <span style={{ fontSize: 13, color: COLORS.text }}>{p.name}</span>
-                        </div>
-                      ))}
+                      {it.people.map((p, i) => {
+                        // Geen "?" meer tonen: als geen avatar, tonen we enkel naam (en enkel initiaal als die er is)
+                        const initial = p.name?.[0]?.toUpperCase();
+                        return (
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            {p.avatar_url ? (
+                              <img
+                                src={p.avatar_url}
+                                alt={p.name}
+                                style={{
+                                  width: 25,
+                                  height: 25,
+                                  objectFit: "contain",
+                                  background: "#fff",
+                                  flex: "0 0 auto",
+                                  borderRadius: 4,
+                                  
+                                }}
+                              />
+                            ) : initial ? (
+                              <div
+                                aria-hidden
+                                style={{
+                                  width: 22,
+                                  height: 22,
+                                  border: `1px solid ${COLORS.line}`,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontSize: 12,
+                                  background: "#f5f5f5",
+                                  color: "#555",
+                                  flex: "0 0 auto",
+                                  borderRadius: 4,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {initial}
+                              </div>
+                            ) : (
+                              // Geen avatar en geen initiaal: niets grafisch tonen
+                              <span style={{ display: "none" }} />
+                            )}
+                            <span style={{ fontSize: 13, color: COLORS.text }}>{p.name}</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );
