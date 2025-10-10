@@ -5,7 +5,7 @@ import localFont from "next/font/local";
 import { supabase } from "@/lib/supabaseClient";
 import FloatingNav from "../components/FloatingNav";
 import LegendNavCalendar from "../components/LegendNav_Calendar";
-import { School, PartyPopper, Cake } from "lucide-react"; // Lucide iconen
+import { School, PartyPopper, Cake } from "lucide-react";
 
 /* Vaste offset onder FloatingNav */
 const FLOATING_NAV_OFFSET = 5;
@@ -28,11 +28,12 @@ const COLORS = {
   schoolBg: "#FFF9C4",
   publicBg: "#FDE68A",
   approvedBg: "#C3E8E9",
-  birthdayBg: "#FCE7F3",     // zachte roze tint
-  jewishBg: "#DBEAFE",       // zachte blauw-tint voor Joodse feestdagen
+  birthdayBg: "#FCE7F3",
+  // jewishBg niet gebruikt als vulling (we tonen randje i.p.v. vulling)
+  jewishBg: "#DBEAFE",
 };
 
-// Breedte van de strepen (px) – we gebruiken GEEN streepjes als er verjaardag is
+// Breedte van de strepen (px) – geen streepjes als er verjaardag is
 const STRIPE = 6;
 
 const MONTHS_NL = [
@@ -61,7 +62,6 @@ function IconChevronRight({ color = COLORS.primary, size = 22 }: { color?: strin
 
 /* ===== Davidster-icoon voor Joodse feestdagen ===== */
 function IconStarOfDavid({ size = 16, color = COLORS.text }: { size?: number; color?: string }) {
-  // Simpele Davidster (twee over elkaar geplaatste driehoeken)
   return (
     <svg
       width={size}
@@ -102,7 +102,10 @@ function ymd(year: number, month0: number, day: number) {
 
 /* ===== Types ===== */
 type HolidayType = "school" | "public" | "jewish";
-type HolidayInfo = { type: HolidayType; name: string };
+
+/** We slaan per datum alle aanwezige types op (public/school/jewish) met optionele namen. */
+type HolidayFlags = { public?: string; school?: string; jewish?: string };
+
 type LeavePerson = { name: string; avatar_url: string | null };
 type TooltipItem =
   | { kind: "holiday"; name: string; subtype: HolidayType }
@@ -120,21 +123,13 @@ function MonthCalendar({
 }: {
   year: number;
   month0: number;
-  holidaysByDate: Record<string, HolidayInfo>;
+  holidaysByDate: Record<string, HolidayFlags>;
   approvedByDate: Record<string, LeavePerson[]>;
   birthdaysByDate: Record<string, string[]>;
   onHover: (e: React.MouseEvent | null, items: TooltipItem[] | null) => void;
 }) {
   const weeks = buildMonthMatrix(year, month0);
   const monthName = MONTHS_NL[month0];
-
-  const getHolidayColor = (h?: HolidayInfo | null) => {
-    if (!h) return null;
-    if (h.type === "public") return COLORS.publicBg;
-    if (h.type === "school") return COLORS.schoolBg;
-    if (h.type === "jewish") return COLORS.jewishBg;
-    return null;
-  };
 
   return (
     <div
@@ -200,39 +195,38 @@ function MonthCalendar({
               let backgroundRepeat: "repeat" | "no-repeat" = "no-repeat";
               let backgroundSize = "auto";
               let backgroundPosition = "0 0";
-              let boxShadowVal = "none";
+              let boxShadowVal: string = "none";
 
               const items: TooltipItem[] = [];
 
               if (day) {
                 const key = ymd(year, month0, day);
-                const h = holidaysByDate[key];
+                const flags = holidaysByDate[key] || {};
                 const leaves = approvedByDate[key] || [];
                 const bdays = birthdaysByDate[key] || [];
 
-                const holidayColor = getHolidayColor(h);
+                const hasPublic = !!flags.public;
+                const hasSchool = !!flags.school;
+                const hasJewish = !!flags.jewish;
 
-                const hasHoliday = !!holidayColor;
                 const hasLeave = leaves.length > 0;
                 const hasBirthday = bdays.length > 0;
 
-                // ===== Achtergrondregels (nooit streepjes als er verjaardag is) =====
+                // ===== Achtergrond-regels (nooit streepjes als er verjaardag is) =====
                 if (hasBirthday) {
-                  if (!hasHoliday && !hasLeave) {
+                  if (!hasPublic && !hasSchool && !hasLeave) {
                     backgroundColor = COLORS.birthdayBg;
                     boxShadowVal = "none";
-                  } else if (hasHoliday && !hasLeave) {
-                    backgroundColor = holidayColor!;
+                  } else if ((hasPublic || hasSchool) && !hasLeave) {
+                    backgroundColor = hasPublic ? COLORS.publicBg : COLORS.schoolBg;
                     boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`;
-                  } else if (!hasHoliday && hasLeave) {
-                    backgroundColor = COLORS.approvedBg;
-                    boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`;
-                  } else if (hasHoliday && hasLeave) {
+                  } else {
                     backgroundColor = COLORS.approvedBg;
                     boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`;
                   }
                 } else {
-                  if (hasHoliday && hasLeave) {
+                  if ((hasPublic || hasSchool) && hasLeave) {
+                    const holidayColor = hasPublic ? COLORS.publicBg : COLORS.schoolBg;
                     backgroundColor = COLORS.approvedBg;
                     backgroundImage = `repeating-linear-gradient(
                       45deg,
@@ -242,8 +236,8 @@ function MonthCalendar({
                       ${COLORS.approvedBg} ${STRIPE * 2}px
                     )`;
                     backgroundRepeat = "repeat";
-                  } else if (hasHoliday) {
-                    backgroundColor = holidayColor!;
+                  } else if (hasPublic || hasSchool) {
+                    backgroundColor = hasPublic ? COLORS.publicBg : COLORS.schoolBg;
                     backgroundImage = "none";
                   } else if (hasLeave) {
                     backgroundColor = COLORS.approvedBg;
@@ -253,9 +247,16 @@ function MonthCalendar({
                   }
                 }
 
-                // Tooltip-items (volgorde: verjaardag, feestdag, verlof)
+                // === Randje voor joodse feestdag (ook bovenop school), niet op verjaardag
+                if (!hasBirthday && hasJewish) {
+                  boxShadowVal = `inset 0 0 0 3px ${COLORS.publicBg}`; // oranje randje
+                }
+
+                // Tooltip-items (toon elk aanwezig type)
                 if (bdays.length > 0) items.push({ kind: "birthday", names: bdays });
-                if (h) items.push({ kind: "holiday", name: h.name, subtype: h.type });
+                if (flags.public) items.push({ kind: "holiday", name: flags.public, subtype: "public" });
+                if (flags.school) items.push({ kind: "holiday", name: flags.school, subtype: "school" });
+                if (flags.jewish) items.push({ kind: "holiday", name: flags.jewish, subtype: "jewish" });
                 if (leaves.length > 0) items.push({ kind: "leave", people: leaves });
               }
 
@@ -284,7 +285,7 @@ function MonthCalendar({
                     color: day ? COLORS.text : COLORS.textMuted,
                     opacity: day ? 1 : 0.55,
                     position: "relative",
-                    cursor: hasInfo ? "default" : "default",
+                    cursor: "default",
                     transition: "box-shadow 120ms ease-in-out",
                     boxShadow: boxShadowVal,
                     overflow: "hidden",
@@ -305,7 +306,8 @@ function MonthCalendar({
 function CalendarContent() {
   const [year, setYear] = useState(2025);
 
-  const [holidaysByDate, setHolidaysByDate] = useState<Record<string, HolidayInfo>>({});
+  // Nu: meerdere holiday-flags per datum
+  const [holidaysByDate, setHolidaysByDate] = useState<Record<string, HolidayFlags>>({});
   const [approvedByDate, setApprovedByDate] = useState<Record<string, LeavePerson[]>>({});
   const [birthdaysByDate, setBirthdaysByDate] = useState<Record<string, string[]>>({});
 
@@ -323,7 +325,7 @@ function CalendarContent() {
       const from = `${year}-01-01`;
       const to = `${year + 1}-01-01`;
 
-      // 1) Holidays (inclusief jewish)
+      // 1) Holidays (bewaar ALLE types per datum)
       const { data: holidays, error: hErr } = await supabase
         .from("holidays")
         .select("holiday_date,name,type")
@@ -334,19 +336,15 @@ function CalendarContent() {
         console.error("[holidays fetch]", hErr);
         if (isMounted) setHolidaysByDate({});
       } else {
-        const map: Record<string, HolidayInfo> = {};
+        const map: Record<string, HolidayFlags> = {};
         for (const row of holidays ?? []) {
           const t = (row as any).type as string | null;
-          if (t !== "school" && t !== "public" && t !== "jewish") continue; // neem school/public/jewish
+          if (t !== "school" && t !== "public" && t !== "jewish") continue;
           const date = (row as any).holiday_date as string;
-          const info: HolidayInfo = { type: t as HolidayType, name: (row as any).name as string };
-
-          // Prioriteit: public > jewish > school
-          const current = map[date];
-          const rank = (ty: HolidayType) => (ty === "public" ? 3 : ty === "jewish" ? 2 : 1);
-          if (!current || rank(info.type) >= rank(current.type)) {
-            map[date] = info;
-          }
+          if (!map[date]) map[date] = {};
+          if (t === "public") map[date].public = (row as any).name as string | undefined;
+          if (t === "school") map[date].school = (row as any).name as string | undefined;
+          if (t === "jewish") map[date].jewish = (row as any).name as string | undefined;
         }
         if (isMounted) setHolidaysByDate(map);
       }
@@ -528,7 +526,7 @@ function CalendarContent() {
         </section>
 
         {/* extra witruimte onderaan om te kunnen scrollen */}
-<div style={{ height: 200 }} aria-hidden />
+        <div style={{ height: 200 }} aria-hidden />
 
         {/* Tooltip */}
         {tooltip && (
@@ -590,7 +588,6 @@ function CalendarContent() {
                     </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                       {it.people.map((p, i) => {
-                        // Geen "?" meer tonen: als geen avatar, tonen we enkel naam (en enkel initiaal als die er is)
                         const initial = p.name?.[0]?.toUpperCase();
                         return (
                           <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -605,7 +602,6 @@ function CalendarContent() {
                                   background: "#fff",
                                   flex: "0 0 auto",
                                   borderRadius: 4,
-                                  
                                 }}
                               />
                             ) : initial ? (
@@ -629,7 +625,6 @@ function CalendarContent() {
                                 {initial}
                               </div>
                             ) : (
-                              // Geen avatar en geen initiaal: niets grafisch tonen
                               <span style={{ display: "none" }} />
                             )}
                             <span style={{ fontSize: 13, color: COLORS.text }}>{p.name}</span>

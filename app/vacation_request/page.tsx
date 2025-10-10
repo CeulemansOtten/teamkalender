@@ -28,7 +28,6 @@ const COLORS = {
   btnHover: "#f3f4f6",
   schoolBg: "#FFF9C4",
   publicBg: "#FDE68A",
-  jewishBg: "#DBEAFE",
   dayHoverBg: "#FEE2E2",
   daySelectedBg: "#FECACA",
   applyBorder: "#B91C1C",
@@ -37,50 +36,14 @@ const COLORS = {
 };
 
 const LEAVE_COLOR = "#C3E8E9";
-const MONTHS_NL = [
-  "januari","februari","maart","april","mei","juni","juli","augustus","september","oktober","november","december",
-];
+const MONTHS_NL = ["januari","februari","maart","april","mei","juni","juli","augustus","september","oktober","november","december"];
 const DOW_NL = ["ma","di","wo","do","vr","za","zo"];
-
-/* ===== Constants ===== */
-const HOURS_PER_FULL_DAY = 8;
-const HOURS_PER_HALF_DAY = 4;
-const SALDO_TO_DAYS_DIVISOR = 4;
-const SALDO_STATUSES = ["requested", "approved"] as const;
-
-/* ===== Icons pijlen ===== */
-function IconChevronLeft({ color = COLORS.primary, size = 22 }: { color?: string; size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-      stroke={color} strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <polyline points="15 6 9 12 15 18" />
-    </svg>
-  );
-}
-function IconChevronRight({ color = COLORS.primary, size = 22 }: { color?: string; size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-      stroke={color} strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <polyline points="9 6 15 12 9 18" />
-    </svg>
-  );
-}
-
-/* ===== Davidster voor joodse feestdagen ===== */
-function IconStarOfDavid({ size = 16, color = COLORS.text }: { size?: number; color?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 3 L4 17 H20 Z" />
-      <path d="M12 21 L4 7 H20 Z" />
-    </svg>
-  );
-}
 
 /* ===== Helpers ===== */
 function daysInMonth(y: number, m0: number) { return new Date(y, m0 + 1, 0).getDate(); }
 function buildMonthMatrix(y: number, m0: number) {
   const total = daysInMonth(y, m0);
-  const firstIdx = (new Date(y, m0, 1).getDay() + 6) % 7; // maandag = 0
+  const firstIdx = (new Date(y, m0, 1).getDay() + 6) % 7; // ma = 0
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstIdx; i++) cells.push(null);
   for (let d = 1; d <= total; d++) cells.push(d);
@@ -91,8 +54,9 @@ function buildMonthMatrix(y: number, m0: number) {
 }
 function pad2(n: number) { return n < 10 ? `0${n}` : `${n}`; }
 function ymd(y: number, m0: number, d: number) { return `${y}-${pad2(m0 + 1)}-${pad2(d)}`; }
+const round05 = (x: number) => Math.round(x * 2) / 2;
 
-/* ===== Selectiestatus ===== */
+/* ===== Selectiestatus (voor AANVRAGEN) ===== */
 type SelState = "none" | "full" | "am" | "pm";
 function nextState(s: SelState): SelState { return s === "none" ? "full" : s === "full" ? "am" : s === "am" ? "pm" : "none"; }
 function nextBadge(s: SelState) {
@@ -107,19 +71,98 @@ function nextBadge(s: SelState) {
 type PartStatus = "requested" | "approved" | undefined;
 type ExistingByDate = Record<string, { am?: PartStatus; pm?: PartStatus }>;
 
-/* ===== Tooltip items ===== */
+/* ===== Feestdagen ===== */
 type HolidaySubtype = "school" | "public" | "jewish";
+
+/** We bewaren ALLE types per dag, i.p.v. 1 type te overschrijven. */
+type HolidayFlags = {
+  public?: string; // naam
+  school?: string; // naam
+  jewish?: string; // naam
+};
+type HolidayMap = Record<string, HolidayFlags>;
+
+/* ===== Tooltip items ===== */
 type TooltipItem =
   | { kind: "birthday" }
   | { kind: "holiday"; name?: string; subtype: HolidaySubtype }
-  | { kind: "leave"; label: string };
+  | { kind: "leave"; label: string; avatar?: string | null };
+
+/* ===== Iconen ===== */
+function IconStarOfDavid({ size = 16, color = COLORS.text }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3 L4 17 H20 Z" />
+      <path d="M12 21 L4 7 H20 Z" />
+    </svg>
+  );
+}
+
+/* ===== Pharmacy helpers (uren per dagdeel) ===== */
+function normPart(v: string): "full" | "am" | "pm" | null {
+  const s = (v || "").toString().trim().toLowerCase();
+  if (["hele dag","heledag","full","full day","dag"].includes(s)) return "full";
+  if (["voormiddag","vm","am","morning"].includes(s)) return "am";
+  if (["namiddag","nm","pm","afternoon"].includes(s)) return "pm";
+  return null;
+}
+
+async function fetchPharmacyHours(pharmacyId: string) {
+  // 1) Probeer detail-rijen (daypart,hours)
+  const trySources = [
+    { table: "pharmacy_hours", filterCol: "pharmacy_id" },
+    { table: "pharmacy",       filterCol: "id" }, // als (daypart,hours) soms rechtstreeks in pharmacy zitten
+  ];
+  for (const src of trySources) {
+    const { data, error } = await supabase
+      .from(src.table)
+      .select("daypart, hours")
+      .eq(src.filterCol, pharmacyId);
+    if (!error && Array.isArray(data) && data.length > 0) {
+      let full = NaN, am = NaN, pm = NaN;
+      for (const row of data as any[]) {
+        const p = normPart(row.daypart);
+        const hrs = Number(row.hours);
+        if (p && !isNaN(hrs)) {
+          if (p === "full") full = hrs;
+          if (p === "am")   am   = hrs;
+          if (p === "pm")   pm   = hrs;
+        }
+      }
+      if (isNaN(full) && !isNaN(am) && !isNaN(pm)) full = am + pm;
+      if (!isNaN(full) && isNaN(am) && isNaN(pm)) { am = full/2; pm = full/2; }
+      if (!isNaN(full) || !isNaN(am) || !isNaN(pm)) {
+        return {
+          full: !isNaN(full) ? full : 8,
+          am:   !isNaN(am)   ? am   : (!isNaN(full) ? full/2 : 4),
+          pm:   !isNaN(pm)   ? pm   : (!isNaN(full) ? full/2 : 4),
+        };
+      }
+    }
+  }
+  // 2) Fallback kolommen op pharmacy
+  const { data: ph } = await supabase
+    .from("pharmacy")
+    .select("full_day_hours, am_hours, pm_hours")
+    .eq("id", pharmacyId)
+    .maybeSingle();
+  if (ph) {
+    const full = Number((ph as any).full_day_hours ?? 8) || 8;
+    const am   = Number((ph as any).am_hours ?? full/2) || full/2;
+    const pm   = Number((ph as any).pm_hours ?? full/2) || full/2;
+    return { full, am, pm };
+  }
+  // 3) Vangnet
+  return { full: 8, am: 4, pm: 4 };
+}
 
 /* ===== Dagcel ===== */
 type HoverMode = "interactive" | "x-only" | "none";
 
 function DayCell({
-  day, bg, hoverMode, state, onCycle, existing, isBirthday, birthdateConflict,
-  onHover, items,
+  day, bg, hoverMode, state, onCycle, existing, isBirthday,
+  showJewishBorder,
+  onHover, items, isFutureDay, revokeSelected, onToggleRevoke,
 }: {
   day: number | null;
   bg: string;
@@ -128,23 +171,28 @@ function DayCell({
   onCycle?: () => void;
   existing?: { am?: PartStatus; pm?: PartStatus };
   isBirthday?: boolean;
-  birthdateConflict?: boolean;
+  showJewishBorder?: boolean;
   onHover?: (e: React.MouseEvent | null, items: TooltipItem[] | null) => void;
   items?: TooltipItem[];
+  isFutureDay?: boolean;
+  revokeSelected?: boolean;
+  onToggleRevoke?: () => void;
 }) {
   const [hover, setHover] = useState(false);
   const interactive = hoverMode === "interactive";
-  // Hover-overlay moet overal werken
+  const xOnly = hoverMode === "x-only";
+  const blocked = hoverMode === "none";
   const showHover = !!day;
 
+  const hasExisting = !!(existing?.am || existing?.pm);
   const baseBg = isBirthday ? COLORS.birthdateBg : bg;
-  const hoverBg = interactive && hover && state === "none" && !existing ? COLORS.dayHoverBg : baseBg;
+  const showRedHover = hover && (interactive || xOnly);
+  const hoverBg = showRedHover ? COLORS.dayHoverBg : baseBg;
 
   function overlayHalf(which: "am" | "pm", status: PartStatus) {
     const st: React.CSSProperties = {
       position: "absolute",
-      left: 0,
-      right: 0,
+      left: 0, right: 0,
       height: "50%",
       background: "transparent",
       pointerEvents: "none",
@@ -160,22 +208,30 @@ function DayCell({
 
   const bothReq = existing?.am === "requested" && existing?.pm === "requested";
   const bothApp = existing?.am === "approved" && existing?.pm === "approved";
-
   const hasNew = state !== "none";
-  const hasExisting = !!(existing?.am || existing?.pm);
 
   let borderColor = COLORS.line;
   let borderWidth = 1;
   if (hasNew) { borderColor = COLORS.applyBorder; borderWidth = 2; }
-  else if (hasExisting) { borderColor = COLORS.line; borderWidth = 1; }
+
+  const onCentralClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (blocked) return;
+    if (interactive && onCycle) onCycle();
+    if (xOnly && isFutureDay && onToggleRevoke) onToggleRevoke();
+  };
 
   return (
     <div
       onMouseEnter={(e) => { if (showHover) { setHover(true); onHover?.(e, items ?? null); } }}
       onMouseMove={(e) => { if (showHover) onHover?.(e, items ?? null); }}
       onMouseLeave={() => { setHover(false); onHover?.(null, null); }}
-      onClick={() => { if (interactive && day && onCycle) onCycle(); }}
-      role={interactive ? "button" : undefined}
+      onClick={() => {
+        if (blocked) return;
+        if (interactive && day && onCycle) onCycle();
+        if (xOnly && isFutureDay && onToggleRevoke) onToggleRevoke();
+      }}
+      role={(interactive || xOnly) ? "button" : undefined}
       style={{
         position: "relative",
         height: 36,
@@ -189,16 +245,15 @@ function DayCell({
         color: "#000",
         opacity: day ? 1 : 0.55,
         userSelect: "none",
-        transition: "background 120ms ease, border-color 120ms ease",
-        cursor: interactive ? "pointer" : "default",
+        transition: "background 120ms ease, border-color 120ms ease, opacity 120ms ease",
+        cursor: blocked ? "default" : (interactive || xOnly) ? "pointer" : "default",
         overflow: "hidden",
+        pointerEvents: "auto",
       }}
     >
       {bothReq && (
-        <div style={{
-          position: "absolute", inset: 0, borderRadius: 8, pointerEvents: "none",
-          background: `repeating-linear-gradient(45deg, ${LEAVE_COLOR} 0, ${LEAVE_COLOR} 8px, #ffffff 8px, #ffffff 16px)`,
-        }} />
+        <div style={{ position: "absolute", inset: 0, borderRadius: 8, pointerEvents: "none",
+          background: `repeating-linear-gradient(45deg, ${LEAVE_COLOR} 0, ${LEAVE_COLOR} 8px, #ffffff 8px, #ffffff 16px)` }} />
       )}
       {bothApp && (
         <div style={{ position: "absolute", inset: 0, borderRadius: 8, pointerEvents: "none", background: LEAVE_COLOR }} />
@@ -210,7 +265,7 @@ function DayCell({
         </>
       )}
 
-      {state === "full" && !existing && (
+      {state === "full" && !hasExisting && (
         <div style={{ position: "absolute", inset: 0, background: COLORS.daySelectedBg, borderRadius: 8, pointerEvents: "none" }} />
       )}
       {state === "am" && !(existing && existing.am) && (
@@ -220,24 +275,25 @@ function DayCell({
         <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "50%", background: COLORS.daySelectedBg, borderBottomLeftRadius: 8, borderBottomRightRadius: 8, pointerEvents: "none" }} />
       )}
 
-      <span style={{ position: "relative", zIndex: 3 }}>{day ?? ""}</span>
-
-      {isBirthday && birthdateConflict && (
-        <div
-          aria-hidden
-          style={{
-            position: "absolute",
-            inset: 2,
-            borderRadius: 6,
-            border: `2px solid ${COLORS.birthdateBorder}`,
-            pointerEvents: "none",
-            zIndex: 3,
-          }}
-        />
+      {/* Joodse feestdag: oranje randje (ook bovenop schoolvakantie) */}
+      {!isBirthday && showJewishBorder && (
+        <div aria-hidden style={{ position: "absolute", inset: 2, borderRadius: 6, border: `3px solid ${COLORS.publicBg}`, pointerEvents: "none", zIndex: 3 }} />
       )}
 
-      {/* plus/VM/NM knop (alleen als interactief) */}
-      {showHover && interactive && (
+      {/* intrekken-visual */}
+      {xOnly && revokeSelected && (
+        <div style={{ position: "absolute", inset: 0, background: COLORS.daySelectedBg, borderRadius: 8, pointerEvents: "none" }} />
+      )}
+
+      <span style={{ position: "relative", zIndex: 3 }}>{day ?? ""}</span>
+
+      {/* Verjaardag-rand */}
+      {isBirthday && (
+        <div aria-hidden style={{ position: "absolute", inset: 2, borderRadius: 6, border: `2px solid ${COLORS.birthdateBorder}`, pointerEvents: "none", zIndex: 3 }} />
+      )}
+
+      {/* Centrale knop */}
+      {showHover && (interactive || (xOnly && isFutureDay)) && (
         <button
           aria-hidden={!hover}
           tabIndex={-1}
@@ -245,7 +301,7 @@ function DayCell({
             position: "absolute",
             top: "50%", left: "50%", transform: "translate(-50%, -50%)",
             width: 28, height: 28, borderRadius: 999,
-            border: `1px solid ${COLORS.primary}`,
+            border: `1px solid ${xOnly ? COLORS.applyBorder : COLORS.primary}`,
             background: COLORS.btnBg,
             display: "flex", alignItems: "center", justifyContent: "center",
             boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
@@ -253,14 +309,15 @@ function DayCell({
             pointerEvents: hover ? "auto" : "none",
             transition: "opacity 120ms ease, background 120ms ease",
             cursor: "pointer",
-            fontSize: 12, fontWeight: 800, color: COLORS.primary,
+            fontSize: 12, fontWeight: 900, color: xOnly ? COLORS.applyBorder : COLORS.primary,
             zIndex: 4,
           }}
           onMouseEnter={(e) => (e.currentTarget.style.background = COLORS.btnHover)}
           onMouseLeave={(e) => (e.currentTarget.style.background = COLORS.btnBg)}
-          onClick={(e) => { e.stopPropagation(); onCycle?.(); }}
+          onClick={onCentralClick}
+          title={xOnly ? (revokeSelected ? "Niet meer intrekken" : "Selecteer om in te trekken") : "Selecteer dagdeel"}
         >
-          {nextBadge(state)}
+          {xOnly ? "×" : nextBadge(state)}
         </button>
       )}
     </div>
@@ -270,27 +327,28 @@ function DayCell({
 /* ===== Maand ===== */
 function MonthCalendar({
   year, month0, holidayMap, selections, onCycleDate, existingByDate,
-  birthdateDD, birthdateMM, onHover, todayYMD, 
+  birthdateDD, birthdateMM, onHover, todayYMD,
+  revokeSel, onToggleRevokeDate, personAvatar,
 }: {
   year: number;
   month0: number;
-  holidayMap: Record<string, { type: HolidaySubtype; name?: string }>;
+  holidayMap: HolidayMap;
   selections: Record<string, SelState>;
   onCycleDate: (key: string) => void;
   existingByDate: ExistingByDate;
   birthdateDD: string | null;
   birthdateMM: string | null;
   onHover: (e: React.MouseEvent | null, items: TooltipItem[] | null) => void;
-   todayYMD: string;             
+  todayYMD: string;
+  revokeSel: Record<string, boolean>;
+  onToggleRevokeDate: (key: string) => void;
+  personAvatar: string | null;
 }) {
   const weeks = buildMonthMatrix(year, month0);
   const monthName = MONTHS_NL[month0];
 
   return (
-    <div style={{
-      background: COLORS.card, border: `1px solid ${COLORS.line}`, borderRadius: 12, padding: 12,
-      display: "flex", flexDirection: "column", gap: 8, minWidth: 260,
-    }}>
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.line}`, borderRadius: 12, padding: 12, display: "flex", flexDirection: "column", gap: 8, minWidth: 260 }}>
       <div style={{ display: "grid", gridTemplateColumns: "8px 1fr", alignItems: "center", columnGap: 8 }}>
         <div style={{ width: 8, height: 24, background: COLORS.primary, borderRadius: 4 }} />
         <h3 className={monthFont.className} style={{ margin: 0, color: COLORS.text, fontSize: 18, fontWeight: 600, textTransform: "capitalize" }}>
@@ -310,79 +368,61 @@ function MonthCalendar({
         {weeks.map((week, wi) => (
           <div key={wi} style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
             {week.map((day, di) => {
-              const isWeekend = di === 5 || di === 6;
+              const isWeekendCol = di === 5 || di === 6;
               if (!day) {
-                return (
-                  <DayCell
-                    key={di}
-                    day={null}
-                    bg={"#fff"}
-                    hoverMode={"none"}
-                    state={"none"}
-                    onHover={onHover}
-                    items={null as any}
-                  />
-                );
+                return <DayCell key={di} day={null} bg={"#fff"} hoverMode={"none"} state={"none"} onHover={onHover} items={null as any} />;
               }
 
               const key = ymd(year, month0, day);
-
               const isPast = key < todayYMD;
+              const isFutureDay = key >= todayYMD;
 
-              const isBirthday =
-                !!birthdateDD && !!birthdateMM &&
-                pad2(day) === birthdateDD && pad2(month0 + 1) === birthdateMM;
+              const isBirthday = !!birthdateDD && !!birthdateMM && pad2(day) === birthdateDD && pad2(month0 + 1) === birthdateMM;
 
-              const holiday = holidayMap[key];
-              const hasExisting = !!(existingByDate[key]?.am || existingByDate[key]?.pm);
+              const flags = holidayMap[key] || {};
+              const ex = existingByDate[key];
+              const hasExisting = !!(ex?.am || ex?.pm);
 
-              // achtergrondkleur
+              // achtergrond: public > (anders) school > (anders) weekend > wit
               let baseBg = "#fff";
-              if (isBirthday) baseBg = COLORS.birthdateBg;
-              else if (holiday?.type === "school") baseBg = COLORS.schoolBg;
-              else if (holiday?.type === "public") baseBg = COLORS.publicBg;
-              else if (holiday?.type === "jewish") baseBg = COLORS.jewishBg;
-              else if (isWeekend) baseBg = COLORS.weekendBg;
+              if (flags.public) baseBg = COLORS.publicBg;
+              else if (flags.school) baseBg = COLORS.schoolBg;
+              else if (isWeekendCol) baseBg = COLORS.weekendBg;
+              if (isBirthday) baseBg = COLORS.birthdateBg; // verjaardag blijft boven
 
-             // klikbaarheid bepalen
+              // klikbaarheid: blokkeer weekend, public, verleden
               let hoverMode: HoverMode = "interactive";
-
-              // verleden? → niet klikbaar
-              if (isPast) {
-                hoverMode = "none";
-              } else if (holiday?.type === "public" || isWeekend) {
-                // weekend & officiële feestdagen niet klikbaar
+              if (isPast || isWeekendCol || !!flags.public) {
                 hoverMode = "none";
               } else if (hasExisting) {
-                // al iets aangevraagd/goedgekeurd → alleen kruisje tonen (x-only)
                 hoverMode = "x-only";
               }
 
               const state: SelState = selections[key] ?? "none";
+              const revokeSelected = !!revokeSel[key];
 
-              // Tooltip items
+              // tooltip (toon alle aanwezige types)
               const items: TooltipItem[] = [];
               if (isBirthday) items.push({ kind: "birthday" });
-              if (holiday) items.push({ kind: "holiday", name: holiday.name, subtype: holiday.type });
+              if (flags.public) items.push({ kind: "holiday", name: flags.public, subtype: "public" });
+              if (flags.school) items.push({ kind: "holiday", name: flags.school, subtype: "school" });
+              if (flags.jewish) items.push({ kind: "holiday", name: flags.jewish, subtype: "jewish" });
 
-              // bestaande leaves — toon "Hele dag" indien beide kanten zelfde status
-              const ex = existingByDate[key];
               if (ex?.am || ex?.pm) {
                 if (ex?.am && ex?.pm && ex.am === ex.pm) {
                   const txt = ex.am === "approved" ? "goedgekeurd" : "aangevraagd";
-                  items.push({ kind: "leave", label: `Hele dag: ${txt}` });
+                  items.push({ kind: "leave", label: `Hele dag: ${txt}`, avatar: personAvatar });
                 } else {
                   const lines: string[] = [];
                   if (ex?.am) lines.push(`Voormiddag: ${ex.am === "approved" ? "goedgekeurd" : "aangevraagd"}`);
                   if (ex?.pm) lines.push(`Namiddag: ${ex.pm === "approved" ? "goedgekeurd" : "aangevraagd"}`);
-                  if (lines.length === 2) items.push({ kind: "leave", label: `${lines[0]} • ${lines[1]}` });
-                  else if (lines.length === 1) items.push({ kind: "leave", label: lines[0] });
+                  const label = lines.length === 2 ? `${lines[0]} • ${lines[1]}` : lines[0];
+                  if (label) items.push({ kind: "leave", label, avatar: personAvatar });
                 }
               }
 
-              const birthdateConflict =
-                isBirthday &&
-                ((holiday?.type === "school" || holiday?.type === "public" || isWeekend) || hasExisting);
+              // Joodse rand tonen als er Joods is (altijd), óók bovenop school
+              const showJewishBorder = !!flags.jewish;
 
               return (
                 <DayCell
@@ -394,9 +434,12 @@ function MonthCalendar({
                   existing={ex}
                   onCycle={() => onCycleDate(key)}
                   isBirthday={isBirthday}
-                  birthdateConflict={birthdateConflict}
+                  showJewishBorder={showJewishBorder}
                   onHover={onHover}
                   items={items}
+                  isFutureDay={isFutureDay}
+                  revokeSelected={revokeSelected}
+                  onToggleRevoke={() => onToggleRevokeDate(key)}
                 />
               );
             })}
@@ -408,6 +451,14 @@ function MonthCalendar({
 }
 
 /* ===== Pagina ===== */
+export default function Page() {
+  return (
+    <Suspense fallback={<div style={{ padding: 12 }}>Laden…</div>}>
+      <VacationRequestContent />
+    </Suspense>
+  );
+}
+
 function VacationRequestContent() {
   const search = useSearchParams();
   const personnelId = search.get("personnel_id");
@@ -416,84 +467,109 @@ function VacationRequestContent() {
   const [personName, setPersonName] = useState<string>("…");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
-  // FEESTDAGEN (incl. Jewish)
-  const [holidayMap, setHolidayMap] = useState<Record<string, { type: HolidaySubtype; name?: string }>>({});
-  const [existingByDate, setExistingByDate] = useState<ExistingByDate>({});
-  const [selections, setSelections] = useState<Record<string, SelState>>({});
+  // uren uit pharmacy (decimaal ok, bv 8.5)
+  const [pharmacyHours, setPharmacyHours] = useState<{ full: number; am: number; pm: number }>({ full: 8, am: 4, pm: 4 });
 
-  // Verjaardag
+  // data
+  const [holidayMap, setHolidayMap] = useState<HolidayMap>({});
+  const [existingByDate, setExistingByDate] = useState<ExistingByDate>({});
+
+  // selecties
+  const [selections, setSelections] = useState<Record<string, SelState>>({});
+  const [revokeSel, setRevokeSel] = useState<Record<string, boolean>>({});
+
+  // bday
   const [birthDM, setBirthDM] = useState<{ d: string | null; m: string | null }>({ d: null, m: null });
 
-  // Hover tooltip state
+  // tooltip & meldingen
   const [tooltip, setTooltip] = useState<{ x: number; y: number; items: TooltipItem[] } | null>(null);
+  const [panelError, setPanelError] = useState<string | null>(null);
 
-  // Entitlements UI open?
+  // panel
   const [showEntitlements, setShowEntitlements] = useState(false);
 
-  // Verdeling (in "dagen" stapjes van 0.5)
+  // verdeling in uren
   type Alloc = { wettelijk: number; overuren: number; adv: number; andere: number; };
   const [alloc, setAlloc] = useState<Alloc>({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 });
 
-  // Saldi per categorie — in dagen
-  const [balances, setBalances] = useState<Alloc>({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 });
+  // saldo in uren
+  const [balancesHrs, setBalancesHrs] = useState<Alloc>({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 });
 
-  // Loader
+  // loader
   const [saving, setSaving] = useState(false);
 
-  // Vandaag in YYYY-MM-DD (voor verleden-blokkade)
+  // vandaag (YYYY-MM-DD)
   const todayYMD = useMemo(() => {
     const t = new Date();
     return ymd(t.getFullYear(), t.getMonth(), t.getDate());
   }, []);
 
-  // Formatter (EU)
-  const fmt1 = useMemo(
-    () => new Intl.NumberFormat("nl-BE", { minimumFractionDigits: 0, maximumFractionDigits: 1 }),
-    []
-  );
+  const fmtHalf = useMemo(() => new Intl.NumberFormat("nl-BE", { minimumFractionDigits: 0, maximumFractionDigits: 1 }), []);
+  const fmtIntOrHalf = (n: number) => fmtHalf.format(round05(n));
 
-  // Persoon
+  /* Persoon + pharmacy (met daypart-hours) */
   useEffect(() => {
     let active = true;
-    async function loadPerson() {
-      if (!personnelId) { setPersonName("Onbekend"); setAvatarUrl(null); setBirthDM({ d: null, m: null }); return; }
-      const { data, error } = await supabase
+    async function loadPersonAndPharmacy() {
+      if (!personnelId) {
+        setPersonName("Onbekend"); setAvatarUrl(null); setBirthDM({ d: null, m: null });
+        setPharmacyHours({ full: 8, am: 4, pm: 4 });
+        return;
+      }
+      const { data: person } = await supabase
         .from("personnel")
-        .select("name, avatar_url, birthdate")
+        .select("name, avatar_url, birthdate, pharmacy")
         .eq("id", personnelId)
         .single();
+
       if (!active) return;
-      if (error || !data) {
+
+      if (!person) {
         setPersonName("Onbekend"); setAvatarUrl(null); setBirthDM({ d: null, m: null });
+        setPharmacyHours({ full: 8, am: 4, pm: 4 });
+        return;
+      }
+
+      setPersonName(person.name || "Onbekend");
+      setAvatarUrl(person.avatar_url || null);
+
+      const b = (person as any).birthdate as string | null;
+      if (b && /^\d{8}$/.test(b)) setBirthDM({ d: b.slice(0,2), m: b.slice(2,4) });
+
+      const pharmacyId = (person as any).pharmacy;
+      if (pharmacyId) {
+        const hours = await fetchPharmacyHours(pharmacyId);
+        if (active) setPharmacyHours(hours);
       } else {
-        setPersonName(data.name || "Onbekend");
-        setAvatarUrl(data.avatar_url || null);
-        const b = (data as any).birthdate as string | null;
-        if (b && /^\d{8}$/.test(b)) setBirthDM({ d: b.slice(0,2), m: b.slice(2,4) });
-        else setBirthDM({ d: null, m: null });
+        setPharmacyHours({ full: 8, am: 4, pm: 4 });
       }
     }
-    loadPerson();
+    loadPersonAndPharmacy();
     return () => { active = false; };
   }, [personnelId]);
 
-  // Feestdagen (incl. Joods)
+  /* Feestdagen: verzamel ALLEN per datum (public / school / jewish) */
   useEffect(() => {
     let mounted = true;
     async function load() {
       const from = `${year}-01-01`;
       const to = `${year + 1}-01-01`;
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("holidays")
         .select("holiday_date,type,name")
         .gte("holiday_date", from)
         .lt("holiday_date", to);
-      if (error || !data) { if (mounted) setHolidayMap({}); return; }
-      const map: Record<string, { type: HolidaySubtype; name?: string }> = {};
+      if (!data) { if (mounted) setHolidayMap({}); return; }
+
+      const map: HolidayMap = {};
       for (const r of data as any[]) {
-        if (r.type === "school" || r.type === "public" || r.type === "jewish") {
-          map[r.holiday_date as string] = { type: r.type, name: r.name as string | undefined };
-        }
+        const t = (r.type || "").toString().toLowerCase() as HolidaySubtype;
+        if (t !== "school" && t !== "public" && t !== "jewish") continue;
+        const date = r.holiday_date as string;
+        if (!map[date]) map[date] = {};
+        if (t === "public") map[date].public = r.name as string | undefined;
+        if (t === "school") map[date].school = r.name as string | undefined;
+        if (t === "jewish") map[date].jewish = r.name as string | undefined;
       }
       if (mounted) setHolidayMap(map);
     }
@@ -501,21 +577,22 @@ function VacationRequestContent() {
     return () => { mounted = false; };
   }, [year]);
 
-  // Bestaande leaves
+  /* Bestaande leave overlays */
   useEffect(() => {
     let mounted = true;
     async function load() {
       if (!personnelId) { setExistingByDate({}); return; }
       const from = `${year}-01-01`;
       const to = `${year + 1}-01-01`;
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("leave_requests")
         .select("leave_date,status,daypart")
         .eq("personnel_id", personnelId)
         .gte("leave_date", from)
         .lt("leave_date", to)
         .in("status", ["requested", "approved"]);
-      if (error || !data) { if (mounted) setExistingByDate({}); return; }
+
+      if (!data) { if (mounted) setExistingByDate({}); return; }
 
       const map: ExistingByDate = {};
       const prefer = (prev: PartStatus, cur: PartStatus): PartStatus =>
@@ -536,16 +613,16 @@ function VacationRequestContent() {
     return () => { mounted = false; };
   }, [personnelId, year]);
 
-  // Saldi per categorie
+  /* Saldi (uren) */
   useEffect(() => {
     let active = true;
     async function loadBalances() {
-      if (!personnelId) { setBalances({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 }); return; }
+      if (!personnelId) { setBalancesHrs({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 }); return; }
 
       const from = `${year}-01-01`;
       const to = `${year + 1}-01-01`;
 
-      const { data: entData, error: entErr } = await supabase
+      const { data: entData } = await supabase
         .from("leave_entitlements")
         .select("reason,total_hours,year")
         .eq("personnel_id", personnelId)
@@ -553,56 +630,59 @@ function VacationRequestContent() {
 
       const { data: reqData } = await supabase
         .from("leave_requests")
-        .select("leave_date,daypart,status")
+        .select("leave_date,daypart,status,hours")
         .eq("personnel_id", personnelId)
         .gte("leave_date", from)
         .lt("leave_date", to)
-        .in("status", SALDO_STATUSES as unknown as string[]);
+        .in("status", ["requested","approved"]);
 
       if (!active) return;
 
-      if (entErr || !entData) { setBalances({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 }); return; }
-
       const totalsByReason = { wettelijk: 0, overuren: 0, adv: 0, andere: 0 } as any;
-      for (const r of entData as any[]) {
+      for (const r of (entData ?? []) as any[]) {
         const key = (String(r.reason || "").toLowerCase() || "andere") as keyof typeof totalsByReason;
         const hrs = Number(r.total_hours || 0);
         if (key in totalsByReason) totalsByReason[key] += hrs;
         else totalsByReason.andere += hrs;
       }
 
-      let usedHours = 0;
-      for (const rr of (reqData ?? []) as any[]) {
+      const usedHours = (reqData ?? []).reduce((sum, rr: any) => {
+        if (typeof rr.hours === "number" && !isNaN(rr.hours)) return sum + rr.hours;
         const dp = String(rr.daypart || "hele dag").toLowerCase();
-        usedHours += dp === "hele dag" ? HOURS_PER_FULL_DAY : HOURS_PER_HALF_DAY;
-      }
+        if (dp === "hele dag") return sum + pharmacyHours.full;
+        if (dp === "voormiddag") return sum + pharmacyHours.am;
+        if (dp === "namiddag") return sum + pharmacyHours.pm;
+        return sum;
+      }, 0);
 
-      const toDays = (hrs: number) => Number(((hrs - usedHours) / SALDO_TO_DAYS_DIVISOR).toFixed(2));
-      setBalances({
-        wettelijk: toDays(totalsByReason.wettelijk),
-        overuren: toDays(totalsByReason.overuren),
-        adv:      toDays(totalsByReason.adv),
-        andere:   toDays(totalsByReason.andere),
-      });
+      const result: Alloc = {
+        wettelijk: Math.max(0, round05(totalsByReason.wettelijk - usedHours)),
+        overuren:  Math.max(0, round05(totalsByReason.overuren  - 0)),
+        adv:       Math.max(0, round05(totalsByReason.adv       - 0)),
+        andere:    Math.max(0, round05(totalsByReason.andere    - 0)),
+      };
+
+      setBalancesHrs(result);
     }
     loadBalances();
-    return () => { active = false; };
-  }, [personnelId, year]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [personnelId, year, pharmacyHours.full, pharmacyHours.am, pharmacyHours.pm]);
 
-  /* ===== Klikken op dag =====
-     - Weekend & officiële feestdag: niet selecteerbaar
-     - Verleden: niet selecteerbaar
-     - Anders: cyclen
-  */
+  /* Niet-selecteerbare check in code die daadwerkelijk togglet */
   const onCycleDate = (key: string) => {
+    if (Object.keys(revokeSel).length > 0) {
+      setPanelError("Je hebt dagen geselecteerd om in te trekken. Rond dat eerst af of maak de selectie leeg.");
+      return;
+    }
     const dt = new Date(key);
     const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
-    const hType = holidayMap[key]?.type;
+    const flags = holidayMap[key] || {};
+    const isPublic = !!flags.public;
 
-    if (isWeekend || hType === "public") return;
-    if (key < todayYMD) return; // verleden blokkeren
+    if (key < todayYMD || isWeekend || isPublic) return;
     if (existingByDate[key]?.am || existingByDate[key]?.pm) return;
 
+    setPanelError(null);
     setSelections(prev => {
       const cur = (prev[key] ?? "none") as SelState;
       const nx = nextState(cur);
@@ -613,56 +693,116 @@ function VacationRequestContent() {
     });
   };
 
-  // Hover handler
+  const onToggleRevokeDate = (key: string) => {
+    if (Object.keys(selections).length > 0) {
+      setPanelError("Je hebt dagen geselecteerd om verlof aan te vragen. Rond dat eerst af of maak de selectie leeg.");
+      return;
+    }
+    if (key < todayYMD) return;
+    setPanelError(null);
+    setRevokeSel(prev => {
+      const next = { ...prev };
+      if (next[key]) delete next[key];
+      else next[key] = true;
+      return next;
+    });
+  };
+
+  async function onConfirmRevoke() {
+    if (!personnelId) return;
+    const dates = Object.keys(revokeSel).filter(d => d >= todayYMD);
+    if (dates.length === 0) return;
+
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from("leave_requests")
+        .delete()
+        .eq("personnel_id", personnelId)
+        .in("leave_date", dates)
+        .in("status", ["requested","approved"]);
+      if (error) throw error;
+
+      setRevokeSel({});
+      // refresh overlays
+      const from = `${year}-01-01`, to = `${year + 1}-01-01`;
+      const { data } = await supabase
+        .from("leave_requests")
+        .select("leave_date,status,daypart")
+        .eq("personnel_id", personnelId)
+        .gte("leave_date", from)
+        .lt("leave_date", to)
+        .in("status", ["requested", "approved"]);
+      const map: ExistingByDate = {};
+      const prefer = (p: PartStatus, c: PartStatus): PartStatus => (p === "approved" || c === "approved") ? "approved" : (p || c);
+      for (const row of data ?? []) {
+        const date = (row as any).leave_date as string;
+        const status = (row as any).status === "approved" ? "approved" : "requested";
+        const part = (row as any).daypart || "hele dag";
+        if (!map[date]) map[date] = {};
+        if (part === "hele dag") { map[date].am = prefer(map[date].am, status); map[date].pm = prefer(map[date].pm, status); }
+        else if (part === "voormiddag") map[date].am = prefer(map[date].am, status);
+        else if (part === "namiddag")  map[date].pm = prefer(map[date].pm, status);
+      }
+      setExistingByDate(map);
+      setPanelError(null);
+    } catch (err) {
+      console.error("Intrekken mislukt:", err);
+      setPanelError("Intrekken mislukt. Probeer opnieuw.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // tooltip
   const handleHover = (e: React.MouseEvent | null, items: TooltipItem[] | null) => {
     if (!e || !items || items.length === 0) { setTooltip(null); return; }
     setTooltip({ x: e.clientX + 12, y: e.clientY + 12, items });
   };
 
-  // Totaal dagen uit selectie
+  // TOTALEN (dagen + uren) meteen op pharmacy-basis
   const totalDays = useMemo(
     () => Object.values(selections).reduce((s, st) => s + (st === "full" ? 1 : 0.5), 0),
     [selections]
   );
-  const totalLabel = useMemo(
-    () => new Intl.NumberFormat("nl-BE", { minimumFractionDigits: 0, maximumFractionDigits: 1 }).format(totalDays),
-    [totalDays]
-  );
+  const totalHoursSelected = useMemo(() => {
+    let sum = 0;
+    for (const st of Object.values(selections)) {
+      if (st === "full") sum += pharmacyHours.full;
+      else if (st === "am") sum += pharmacyHours.am;
+      else if (st === "pm") sum += pharmacyHours.pm;
+    }
+    return round05(sum);
+  }, [selections, pharmacyHours]);
 
-  // Suggestie verdeling
-  type AllocX = { wettelijk: number; overuren: number; adv: number; andere: number; };
-  const snap05 = (x: number) => Math.floor(x * 2 + 1e-6) / 2;
-  function suggestAllocation(total: number, bal: AllocX): AllocX {
-    let rem = snap05(total);
-    const cap = {
-      wettelijk: Math.max(0, snap05(bal.wettelijk)),
-      overuren:  Math.max(0, snap05(bal.overuren)),
-      adv:       Math.max(0, snap05(bal.adv)),
-      andere:    Math.max(0, snap05(bal.andere)),
-    };
-    const out: AllocX = { wettelijk: 0, overuren: 0, adv: 0, andere: 0 };
-    const take = (k: keyof AllocX) => { const t = Math.min(rem, cap[k]); out[k] = snap05(t); rem = Number((rem - out[k]).toFixed(2)); };
-    take("wettelijk"); take("overuren"); take("adv"); if (rem > 0) { out.andere = snap05(rem); rem = 0; }
-    return out;
-  }
-
-  // Resterend te verdelen
   const sumAlloc = (a: Alloc) => a.wettelijk + a.overuren + a.adv + a.andere;
-  const remaining = useMemo(() => {
-    const r = Number((totalDays - sumAlloc(alloc)).toFixed(2));
-    return r < 0 ? 0 : r;
-  }, [totalDays, alloc]);
+  const remainingHours = useMemo(() => {
+    const rem = round05(totalHoursSelected - sumAlloc(alloc));
+    return rem < 0 ? 0 : rem;
+  }, [totalHoursSelected, alloc]);
 
-  useEffect(() => { if (!showEntitlements) setAlloc({ wettelijk: Number(totalDays.toFixed(2)), overuren: 0, adv: 0, andere: 0 }); }, [totalDays, showEntitlements]);
-  useEffect(() => { if (totalDays === 0) { setShowEntitlements(false); setAlloc({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 }); } }, [totalDays]);
+  useEffect(() => {
+    if (!showEntitlements) {
+      setAlloc({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 });
+    } else {
+      let rem = totalHoursSelected;
+      const out: Alloc = { wettelijk: 0, overuren: 0, adv: 0, andere: 0 };
+      const take = (k: keyof Alloc, cap: number) => { const t = Math.min(rem, Math.max(0, cap)); out[k] = round05(t); rem = round05(rem - out[k]); };
+      take("wettelijk", balancesHrs.wettelijk);
+      take("overuren", balancesHrs.overuren);
+      take("adv",      balancesHrs.adv);
+      out.andere = round05(Math.max(0, rem));
+      setAlloc(out);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showEntitlements, totalHoursSelected, balancesHrs.wettelijk, balancesHrs.overuren, balancesHrs.adv]);
 
-  const step = 0.5;
-  const canInc = remaining >= step;
-  const canDec = (k: keyof Alloc) => (alloc[k] >= step);
-  function inc(key: keyof Alloc) { if (!canInc) return; setAlloc(prev => ({ ...prev, [key]: Number((prev[key] + step).toFixed(2)) })); }
-  function dec(key: keyof Alloc) { if (!canDec(key)) return; setAlloc(prev => ({ ...prev, [key]: Number((prev[key] - step).toFixed(2)) })); }
+  const canInc = (k: keyof Alloc) => remainingHours >= 0.5 - 1e-9;
+  const canDec = (k: keyof Alloc) => alloc[k] >= 0.5 - 1e-9;
+  function inc(key: keyof Alloc) { if (!canInc(key)) return; setAlloc(prev => ({ ...prev, [key]: round05(prev[key] + 0.5) })); }
+  function dec(key: keyof Alloc) { if (!canDec(key)) return; setAlloc(prev => ({ ...prev, [key]: round05(prev[key] - 0.5) })); }
 
-  // Opslaan
+  // Opslaan aanvraag
   function daypartFromState(s: SelState) { return s === "full" ? "hele dag" : s === "am" ? "voormiddag" : "namiddag"; }
   type K = keyof Alloc; const ORDER: K[] = ["wettelijk", "overuren", "adv", "andere"];
 
@@ -670,16 +810,24 @@ function VacationRequestContent() {
     if (!personnelId) return;
 
     if (!showEntitlements) {
-      setAlloc(suggestAllocation(totalDays, balances));
       setShowEntitlements(true);
+      setPanelError(null);
       return;
     }
 
-    if (remaining !== 0 || totalDays <= 0) return;
+    if (Object.keys(revokeSel).length > 0) {
+      setPanelError("Je hebt dagen geselecteerd om in te trekken. Rond dat eerst af of maak de selectie leeg.");
+      return;
+    }
+
+    if (remainingHours !== 0 || totalHoursSelected <= 0) return;
 
     const entries = Object.entries(selections)
-      .filter(([d]) => d >= todayYMD) // extra veiligheid
-      .map(([d, st]) => ({ leave_date: d, size: st === "full" ? 1 : 0.5, daypart: daypartFromState(st) }))
+      .filter(([d]) => d >= todayYMD)
+      .map(([d, st]) => {
+        const hours = st === "full" ? pharmacyHours.full : st === "am" ? pharmacyHours.am : pharmacyHours.pm;
+        return { leave_date: d, daypart: daypartFromState(st), hours: round05(hours) };
+      })
       .sort((a, b) => (a.leave_date < b.leave_date ? -1 : a.leave_date > b.leave_date ? 1 : 0));
 
     if (entries.length === 0) return;
@@ -688,12 +836,12 @@ function VacationRequestContent() {
     let bucketIdx = 0;
     const rows = entries.map(e => {
       let idx = bucketIdx;
-      while (idx < ORDER.length && (avail[ORDER[idx]] < e.size - 1e-9)) idx++;
+      while (idx < ORDER.length && (round05(avail[ORDER[idx]] - e.hours) < -1e-9)) idx++;
       if (idx >= ORDER.length) idx = ORDER.length - 1;
       bucketIdx = idx;
 
       const entKey = ORDER[idx];
-      avail[entKey] = Number((avail[entKey] - e.size).toFixed(2));
+      avail[entKey] = round05(Math.max(0, avail[entKey] - e.hours));
 
       return {
         leave_date: e.leave_date,
@@ -701,6 +849,7 @@ function VacationRequestContent() {
         personnel_id: personnelId,
         daypart: e.daypart,
         entitlement: entKey,
+        hours: e.hours,
       };
     });
 
@@ -715,10 +864,10 @@ function VacationRequestContent() {
       setSelections({});
       setShowEntitlements(false);
       setAlloc({ wettelijk: 0, overuren: 0, adv: 0, andere: 0 });
+      setPanelError(null);
 
-      // overlays refresh
-      const from = `${year}-01-01`;
-      const to = `${year + 1}-01-01`;
+      // refresh overlays
+      const from = `${year}-01-01`, to = `${year + 1}-01-01`;
       const { data } = await supabase
         .from("leave_requests")
         .select("leave_date,status,daypart")
@@ -741,7 +890,7 @@ function VacationRequestContent() {
 
     } catch (err: any) {
       console.error("Opslaan mislukt:", err?.message ?? err);
-      alert("Opslaan mislukt. Kijk de console (F12) voor details.");
+      setPanelError("Opslaan mislukt. Kijk de console (F12) voor details.");
     } finally {
       setSaving(false);
     }
@@ -749,18 +898,14 @@ function VacationRequestContent() {
 
   const prevYear = () => setYear(y => y - 1);
   const nextYear = () => setYear(y => y + 1);
-
   function ctrlBtnStyle(disabled: boolean): React.CSSProperties {
     return {
-      width: 28,
-      height: 28,
-      borderRadius: 999,
+      width: 28, height: 28, borderRadius: 999,
       border: `1px solid ${disabled ? COLORS.line : COLORS.btnBorder}`,
       background: disabled ? COLORS.btnHover : COLORS.btnBg,
       color: disabled ? COLORS.textMuted : "inherit",
       cursor: disabled ? "default" : "pointer",
-      fontWeight: 800,
-      opacity: disabled ? 0.6 : 1,
+      fontWeight: 800, opacity: disabled ? 0.6 : 1,
     };
   }
 
@@ -768,98 +913,42 @@ function VacationRequestContent() {
     <>
       <FloatingNav />
       <LegendNavVacationRequest />
-      <main
-        style={{
-          background: COLORS.bg,
-          minHeight: "100vh",
-          padding: 24,
-          boxSizing: "border-box",
-          marginTop: `${FLOATING_NAV_OFFSET}px`,
-          position: "relative",
-        }}
-      >
+
+      <main style={{ background: COLORS.bg, minHeight: "100vh", padding: 24, boxSizing: "border-box", marginTop: `${FLOATING_NAV_OFFSET}px`, position: "relative" }}>
         {/* Header */}
-        <header
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            gap: 12,
-            marginBottom: 16,
-          }}
-        >
+        <header style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 12, marginBottom: 16 }}>
           <button
             onClick={prevYear}
             aria-label="Ga naar vorig jaar"
             className={titleFont.className}
-            style={{
-              padding: "8px 14px",
-              background: COLORS.btnBg,
-              border: `1px solid ${COLORS.btnBorder}`,
-              borderRadius: 999,
-              cursor: "pointer",
-              minWidth: 130,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 10,
-              fontWeight: 900,
-              fontSize: 18,
-              letterSpacing: 0.2,
-              transition: "background 120ms ease",
-            }}
+            style={{ padding: "8px 14px", background: COLORS.btnBg, border: `1px solid ${COLORS.btnBorder}`, borderRadius: 999, cursor: "pointer", minWidth: 130, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 10, fontWeight: 900, fontSize: 18, letterSpacing: 0.2, transition: "background 120ms ease" }}
             onMouseOver={(e) => (e.currentTarget.style.background = COLORS.btnHover)}
             onMouseOut={(e) => (e.currentTarget.style.background = COLORS.btnBg)}
           >
-            <IconChevronLeft />
+            <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={COLORS.primary} strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <polyline points="15 6 9 12 15 18" />
+            </svg>
             <span>{year - 1}</span>
           </button>
 
-          <h1
-            className={titleFont.className}
-            style={{
-              margin: 0,
-              color: COLORS.text,
-              fontSize: 28,
-              fontWeight: 900,
-              letterSpacing: 0.2,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 10,
-            }}
-          >
+          <h1 className={titleFont.className} style={{ margin: 0, color: COLORS.text, fontSize: 28, fontWeight: 900, letterSpacing: 0.2, display: "inline-flex", alignItems: "center", gap: 10 }}>
             <span>Persoonlijke kalender van</span>
             <span>{personName}</span>
-            {avatarUrl && (
-              <img src={avatarUrl} alt={personName} style={{ height: "1em", width: "1em", borderRadius: "50%" }} />
-            )}
+            {avatarUrl && (<img src={avatarUrl} alt={personName} style={{ height: "1em", width: "1em", borderRadius: "50%" }} />)}
           </h1>
 
           <button
             onClick={nextYear}
             aria-label="Ga naar volgend jaar"
             className={titleFont.className}
-            style={{
-              padding: "8px 14px",
-              background: COLORS.btnBg,
-              border: `1px solid ${COLORS.btnBorder}`,
-              borderRadius: 999,
-              cursor: "pointer",
-              minWidth: 130,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 10,
-              fontWeight: 900,
-              fontSize: 18,
-              letterSpacing: 0.2,
-              transition: "background 120ms ease",
-            }}
+            style={{ padding: "8px 14px", background: COLORS.btnBg, border: `1px solid ${COLORS.btnBorder}`, borderRadius: 999, cursor: "pointer", minWidth: 130, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 10, fontWeight: 900, fontSize: 18, letterSpacing: 0.2, transition: "background 120ms ease" }}
             onMouseOver={(e) => (e.currentTarget.style.background = COLORS.btnHover)}
             onMouseOut={(e) => (e.currentTarget.style.background = COLORS.btnBg)}
           >
             <span>{year + 1}</span>
-            <IconChevronRight />
+            <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={COLORS.primary} strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <polyline points="9 6 15 12 9 18" />
+            </svg>
           </button>
         </header>
 
@@ -877,181 +966,133 @@ function VacationRequestContent() {
               birthdateDD={birthDM.d}
               birthdateMM={birthDM.m}
               onHover={handleHover}
-              todayYMD={todayYMD} 
+              todayYMD={todayYMD}
+              revokeSel={revokeSel}
+              onToggleRevokeDate={onToggleRevokeDate}
+              personAvatar={avatarUrl}
             />
           ))}
         </section>
 
-        {/* Rechts onderaan: label + vast knopje */}
-        {totalDays > 0 && (
-          <div
-            style={{
-              position: "fixed",
-              right: 24,
-              bottom: 24,
-              display: "inline-flex",
-              alignItems: "flex-end",
-              gap: 12,
-              zIndex: 9999,
-            }}
-          >
-            {/* LABEL */}
-            <div
-              className={titleFont.className}
-              style={{
-                background: "#fff",
-                border: `1px solid ${COLORS.line}`,
-                borderRadius: 16,
-                boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-                height: showEntitlements ? ("auto" as const) : BUTTON_H,
-                padding: showEntitlements ? "14px 16px" : "0 16px",
-                minWidth: 180,
-                maxWidth: showEntitlements ? 420 : 280,
-                transition: "max-width 200ms ease, padding 200ms ease, height 150ms ease",
-                overflow: "hidden",
-                order: 0,
-                display: "flex",
-                flexDirection: "column",
-                justifyContent: "center",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: BUTTON_H }}>
-                <div style={{ width: 8, height: 16, background: COLORS.primary, borderRadius: 4 }} />
-                <span style={{ fontWeight: 800, color: COLORS.text, fontSize: 14 }}>
-                  {totalLabel} dag{totalDays === 1 ? "" : "en"} geselecteerd
-                </span>
-              </div>
+        {/* Rechts onderaan panel */}
+        {(totalDays > 0 || Object.keys(revokeSel).length > 0) && (
+          <div style={{ position: "fixed", right: 24, bottom: 24, display: "inline-flex", alignItems: "flex-end", gap: 12, zIndex: 9999, maxWidth: 540 }}>
+            <div className={titleFont.className} style={{ background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 16, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", padding: "14px 16px", minWidth: 260 }}>
+              {panelError && <div style={{ color: COLORS.applyBorder, fontWeight: 800, marginBottom: 8 }}>{panelError}</div>}
 
-              {/* Verdelen + saldo */}
-              <div
-                style={{
-                  height: showEntitlements ? "auto" : 0,
-                  opacity: showEntitlements ? 1 : 0,
-                  marginTop: showEntitlements ? 8 : 0,
-                  transition: "opacity 200ms ease, height 200ms ease, margin-top 200ms ease",
-                }}
-                aria-hidden={!showEntitlements}
-              >
-                {[
-                  ["wettelijk", "Wettelijk"] as const,
-                  ["overuren", "Overuren"] as const,
-                  ["adv", "ADV"] as const,
-                  ["andere", "Andere"] as const,
-                ].map(([key, label]) => {
-                  type KK = keyof Alloc;
-                  const k = key as KK;
-                  const disableDec = !(alloc[k] >= 0.5);
-                  const disableInc = !(remaining >= 0.5);
-                  return (
-                    <div key={key} style={{ padding: "6px 0" }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: 14, color: COLORS.text }}>{label}</span>
-                        <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                          <button
-                            onClick={() => !disableDec && dec(k)}
-                            disabled={disableDec}
-                            style={ctrlBtnStyle(disableDec)}
-                            aria-label={`Verlaag ${label} met 0,5`}
-                            onMouseOver={(e) => { if (!disableDec) e.currentTarget.style.background = COLORS.btnHover; }}
-                            onMouseOut={(e) => { if (!disableDec) e.currentTarget.style.background = COLORS.btnBg; }}
-                          >
-                            ‹
-                          </button>
-                          <div
-                            style={{
-                              minWidth: 54,
-                              textAlign: "center",
-                              fontVariantNumeric: "tabular-nums",
-                              padding: "6px 10px",
-                              border: `1px solid ${COLORS.line}`,
-                              borderRadius: 10,
-                              background: COLORS.card,
-                              fontWeight: 800,
-                            }}
-                            aria-label={`${label} aantal`}
-                          >
-                            {fmt1.format((alloc as any)[key] as number)}
-                          </div>
-                          <button
-                            onClick={() => !disableInc && inc(k)}
-                            disabled={disableInc}
-                            style={ctrlBtnStyle(disableInc)}
-                            aria-label={`Verhoog ${label} met 0,5`}
-                            onMouseOver={(e) => { if (!disableInc) e.currentTarget.style.background = COLORS.btnHover; }}
-                            onMouseOut={(e) => { if (!disableInc) e.currentTarget.style.background = COLORS.btnBg; }}
-                          >
-                            ›
-                          </button>
-                        </div>
+              {/* Aanvragen */}
+              {totalDays > 0 && Object.keys(revokeSel).length === 0 && (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <div style={{ width: 8, height: 16, background: COLORS.primary, borderRadius: 4 }} />
+                    <span style={{ fontWeight: 800, color: COLORS.text, fontSize: 14 }}>
+                      {totalDays.toLocaleString("nl-BE", { maximumFractionDigits: 1 })} dag(en) geselecteerd
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 8 }}>
+                    Totaal: <strong>{fmtIntOrHalf(totalHoursSelected)} u</strong>
+                  </div>
+
+                  {showEntitlements && (
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 6 }}>
+                        Te verdelen: <strong>{fmtIntOrHalf(totalHoursSelected)} u</strong>
                       </div>
-
-                      <div style={{ gridColumn: "1 / -1", fontSize: 12, color: COLORS.textMuted, marginTop: 4 }}>
-                        Huidige saldo: {fmt1.format((balances as any)[key] as number)} dag
+                      {([
+                        ["wettelijk", "Wettelijk"] as const,
+                        ["overuren", "Overuren"] as const,
+                        ["adv", "ADV"] as const,
+                        ["andere", "Andere"] as const,
+                      ]).map(([key, label]) => {
+                        type KK = keyof typeof alloc;
+                        const k = key as KK;
+                        const disableDec = !(alloc[k] >= 0.5 - 1e-9);
+                        const disableInc = !(remainingHours >= 0.5 - 1e-9);
+                        return (
+                          <div key={key} style={{ padding: "6px 0" }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 8 }}>
+                              <span style={{ fontSize: 14, color: COLORS.text }}>{label}</span>
+                              <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                                <button onClick={() => !disableDec && dec(k)} disabled={disableDec} style={ctrlBtnStyle(disableDec)} aria-label={`Verlaag ${label} met 0,5u`} onMouseOver={(e) => { if (!disableDec) e.currentTarget.style.background = COLORS.btnHover; }} onMouseOut={(e) => { if (!disableDec) e.currentTarget.style.background = COLORS.btnBg; }}>
+                                  ‹
+                                </button>
+                                <div style={{ minWidth: 64, textAlign: "center", fontVariantNumeric: "tabular-nums", padding: "6px 10px", border: `1px solid ${COLORS.line}`, borderRadius: 10, background: COLORS.card, fontWeight: 800 }} aria-label={`${label} aantal uren`}>
+                                  {fmtIntOrHalf(alloc[k])} u
+                                </div>
+                                <button onClick={() => !disableInc && inc(k)} disabled={disableInc} style={ctrlBtnStyle(disableInc)} aria-label={`Verhoog ${label} met 0,5u`} onMouseOver={(e) => { if (!disableInc) e.currentTarget.style.background = COLORS.btnHover; }} onMouseOut={(e) => { if (!disableInc) e.currentTarget.style.background = COLORS.btnBg; }}>
+                                  ›
+                                </button>
+                              </div>
+                            </div>
+                            <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 4 }}>
+                              Huidige saldo: {fmtIntOrHalf((balancesHrs as any)[key] as number)} u
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div style={{ marginTop: 6, fontSize: 12 }}>
+                        {remainingHours === 0 ? (
+                          <span style={{ color: COLORS.primary, fontWeight: 800 }}>✔ Alles is netjes verdeeld (in uren).</span>
+                        ) : (
+                          <span style={{ color: COLORS.applyBorder, fontWeight: 800 }}>
+                            Nog {fmtIntOrHalf(remainingHours)} u te verdelen.
+                          </span>
+                        )}
                       </div>
                     </div>
-                  );
-                })}
-
-                <div style={{ marginTop: 6, fontSize: 12 }}>
-                  {remaining === 0 ? (
-                    <span style={{ color: COLORS.primary, fontWeight: 800 }}>✔ Alles is netjes verdeeld.</span>
-                  ) : (
-                    <span style={{ color: COLORS.applyBorder, fontWeight: 800 }}>
-                      Nog {fmt1.format(remaining)} te verdelen.
-                    </span>
                   )}
-                </div>
-              </div>
+                </>
+              )}
+
+              {/* Intrekken */}
+              {Object.keys(revokeSel).length > 0 && totalDays === 0 && (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <div style={{ width: 8, height: 16, background: COLORS.applyBorder, borderRadius: 4 }} />
+                    <span style={{ fontWeight: 800, color: COLORS.text, fontSize: 14 }}>
+                      {Object.keys(revokeSel).length} dag(en) geselecteerd om in te trekken
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: COLORS.textMuted }}>
+                    Klik nogmaals op een dag om die uit de selectie te halen.
+                  </div>
+                </>
+              )}
             </div>
 
-            {/* KNOP */}
-            <button
-              onClick={onPrimaryButton}
-              disabled={saving || totalDays <= 0 || (showEntitlements && remaining !== 0)}
-              className={titleFont.className}
-              style={{
-                height: BUTTON_H,
-                padding: "0 16px",
-                background: saving || totalDays <= 0 || (showEntitlements && remaining !== 0) ? "#94d6d7" : COLORS.primary,
-                color: "#fff",
-                border: "none",
-                borderRadius: 999,
-                cursor: saving || totalDays <= 0 || (showEntitlements && remaining !== 0) ? "not-allowed" : "pointer",
-                fontWeight: 900,
-                fontSize: 14,
-                letterSpacing: 0.2,
-                minWidth: 180,
-                alignSelf: "flex-end",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                transition: "background 120ms ease",
-                order: 1,
-              }}
-              title={showEntitlements && remaining !== 0 ? "Verdeel eerst al je dagen" : undefined}
-            >
-              {saving ? "Bezig…" : (showEntitlements ? "Aanvraag doorsturen" : "Verlof aanvragen")}
-            </button>
+            {/* Actieknoppen */}
+            {totalDays > 0 && Object.keys(revokeSel).length === 0 && (
+              <button
+                onClick={async () => {
+                  if (!showEntitlements) { setShowEntitlements(true); return; }
+                  await onPrimaryButton();
+                }}
+                disabled={saving || (showEntitlements && remainingHours !== 0)}
+                className={titleFont.className}
+                style={{ height: BUTTON_H, padding: "0 16px", background: saving || (showEntitlements && remainingHours !== 0) ? "#94d6d7" : COLORS.primary, color: "#fff", border: "none", borderRadius: 999, cursor: saving || (showEntitlements && remainingHours !== 0) ? "not-allowed" : "pointer", fontWeight: 900, fontSize: 14, letterSpacing: 0.2, minWidth: 180, alignSelf: "flex-end", display: "inline-flex", alignItems: "center", justifyContent: "center", transition: "background 120ms ease" }}
+                title={showEntitlements && remainingHours !== 0 ? "Verdeel eerst al je uren" : undefined}
+              >
+                {saving ? "Bezig…" : (showEntitlements ? "Aanvraag doorsturen" : "Verlof aanvragen")}
+              </button>
+            )}
+
+            {Object.keys(revokeSel).length > 0 && totalDays === 0 && (
+              <button
+                onClick={onConfirmRevoke}
+                disabled={saving}
+                className={titleFont.className}
+                style={{ height: BUTTON_H, padding: "0 16px", background: saving ? "#f2bcbc" : COLORS.applyBorder, color: "#fff", border: "none", borderRadius: 999, cursor: saving ? "not-allowed" : "pointer", fontWeight: 900, fontSize: 14, letterSpacing: 0.2, minWidth: 180, alignSelf: "flex-end", display: "inline-flex", alignItems: "center", justifyContent: "center", transition: "background 120ms ease" }}
+                title="Geselecteerde verlofdagen intrekken"
+              >
+                {saving ? "Bezig…" : "Verlof intrekken"}
+              </button>
+            )}
           </div>
         )}
 
-        {/* Hover tooltip (altijd actief) */}
+        {/* Tooltip met avatar */}
         {tooltip && (
-          <div
-            style={{
-              position: "fixed",
-              left: tooltip.x,
-              top: tooltip.y,
-              zIndex: 9999,
-              background: "#ffffff",
-              border: `1px solid ${COLORS.line}`,
-              borderRadius: 8,
-              boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-              padding: 10,
-              minWidth: 220,
-              pointerEvents: "none",
-            }}
-          >
+          <div style={{ position: "fixed", left: tooltip.x, top: tooltip.y, zIndex: 9999, background: "#ffffff", border: `1px solid ${COLORS.line}`, borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", padding: 10, minWidth: 240, pointerEvents: "none" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {tooltip.items.map((it, idx) => {
                 if (it.kind === "birthday") {
@@ -1078,10 +1119,13 @@ function VacationRequestContent() {
                     </div>
                   );
                 }
-                // Leave
                 return (
                   <div key={`l-${idx}`} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{ width: 10, height: 10, borderRadius: 999, background: LEAVE_COLOR, border: `1px solid ${COLORS.line}` }} />
+                    {it.avatar ? (
+                      <img src={it.avatar} alt="avatar" style={{ width: 18, height: 18, borderRadius: 4, objectFit: "cover", border: `1px solid ${COLORS.line}` }} />
+                    ) : (
+                      <div style={{ width: 10, height: 10, borderRadius: 999, background: LEAVE_COLOR, border: `1px solid ${COLORS.line}` }} />
+                    )}
                     <div style={{ fontSize: 13, color: COLORS.text }}>
                       <strong>Verlof:</strong> {it.label}
                     </div>
@@ -1092,20 +1136,11 @@ function VacationRequestContent() {
           </div>
         )}
 
-        {/* extra scrollruimte onderaan */}
         <div style={{ height: 240 }} aria-hidden />
       </main>
     </>
   );
 }
 
-/* ===== Suspense wrapper ===== */
-export default function Page() {
-  return (
-    <Suspense fallback={<div style={{ padding: 12 }}>Laden…</div>}>
-      <VacationRequestContent />
-    </Suspense>
-  );
-}
-
+/* force dynamic */
 export const dynamic = "force-dynamic";
