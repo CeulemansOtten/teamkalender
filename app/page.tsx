@@ -121,7 +121,7 @@ export default function LoginPage() {
     if (typeof window !== "undefined") {
       localStorage.setItem("logged_in_personnel_id", selectedId);
     }
-    router.push(`/calendar/?personnel_id=${encodeURIComponent(selectedId)}`);
+    router.push(`/after_login/?personnel_id=${encodeURIComponent(selectedId)}`);
   }
 
   return (
