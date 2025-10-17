@@ -28,30 +28,38 @@ function isPhoneUA(uaRaw: string | null): boolean {
   return isIphone || isAndroidPhone || isWindowsPhone;
 }
 
-export default function Page({
-  searchParams,
-}: {
+type PageProps = {
   searchParams?: { [key: string]: string | string[] | undefined };
-}) {
-  const h = headers();
+};
+
+// ⚠️ Server Component (geen "use client")
+export default async function Page({ searchParams }: PageProps) {
+  // ✅ wacht op headers() en cookies()
+  const h = await headers();
+  const c = await cookies();
+
   const ua = h.get("user-agent");
 
-  // 1) haal personnel_id uit querystring
+  // 1) personnel_id uit querystring
   let personnelId =
-    (typeof searchParams?.personnel_id === "string" && searchParams?.personnel_id) ||
-    undefined;
+    typeof searchParams?.personnel_id === "string"
+      ? searchParams.personnel_id
+      : Array.isArray(searchParams?.personnel_id)
+      ? searchParams!.personnel_id[0]
+      : undefined;
 
-  // 2) zo niet, haal het uit cookie
+  // 2) anders uit cookie
   if (!personnelId) {
-    personnelId = cookies().get("personnel_id")?.value;
+    personnelId = c.get("personnel_id")?.value;
   }
 
-  // 3) bouw de doel-URL met personnel_id
+  // 3) doel-URL bouwen met personnel_id
   const params = new URLSearchParams();
   if (personnelId) params.set("personnel_id", personnelId);
 
   const basePath = isPhoneUA(ua) ? "/calendar_mobile" : "/calendar";
   const to = params.toString() ? `${basePath}?${params.toString()}` : basePath;
 
+  // 4) doorsturen
   redirect(to);
 }
