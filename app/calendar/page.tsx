@@ -5,7 +5,7 @@ import localFont from "next/font/local";
 import { supabase } from "@/lib/supabaseClient";
 import FloatingNav from "../components/FloatingNav";
 import LegendNavCalendar from "../components/LegendNav_Calendar";
-import { School, PartyPopper, Cake } from "lucide-react";
+import { School, PartyPopper, Cake, MoonStar } from "lucide-react";
 
 /* Vaste offset onder FloatingNav */
 const FLOATING_NAV_OFFSET = 5;
@@ -101,10 +101,10 @@ function ymd(year: number, month0: number, day: number) {
 }
 
 /* ===== Types ===== */
-type HolidayType = "school" | "public" | "jewish";
+type HolidayType = "school" | "public" | "jewish" | "islam";
 
-/** We slaan per datum alle aanwezige types op (public/school/jewish) met optionele namen. */
-type HolidayFlags = { public?: string; school?: string; jewish?: string };
+/** We slaan per datum alle aanwezige types op (public/school/jewish/islam) met optionele namen. */
+type HolidayFlags = { public?: string; school?: string; jewish?: string; islam?: string };
 
 type LeavePerson = { name: string; avatar_url: string | null };
 type TooltipItem =
@@ -208,21 +208,26 @@ function MonthCalendar({
                 const hasPublic = !!flags.public;
                 const hasSchool = !!flags.school;
                 const hasJewish = !!flags.jewish;
+                const hasIslam = !!flags.islam;
 
                 const hasLeave = leaves.length > 0;
                 const hasBirthday = bdays.length > 0;
 
                 // ===== Achtergrond-regels (nooit streepjes als er verjaardag is) =====
                 if (hasBirthday) {
+                  // Basis: verjaardagsachtergrond
                   if (!hasPublic && !hasSchool && !hasLeave) {
                     backgroundColor = COLORS.birthdayBg;
-                    boxShadowVal = "none";
+                    // Als er tegelijk een jewish/islam feestdag is tonen we GELE rand
+                    boxShadowVal = (hasJewish || hasIslam) ? `inset 0 0 0 3px ${COLORS.publicBg}` : "none";
                   } else if ((hasPublic || hasSchool) && !hasLeave) {
+                    // Feestdag + verjaardag: gebruik feestdag-achtergrond, maar laat verjaardagsrand zien
                     backgroundColor = hasPublic ? COLORS.publicBg : COLORS.schoolBg;
-                    boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`;
+                    boxShadowVal = (hasJewish || hasIslam) ? `inset 0 0 0 3px ${COLORS.publicBg}` : `inset 0 0 0 3px ${COLORS.birthdayBg}`;
                   } else {
+                    // Verlof (approved) + verjaardag
                     backgroundColor = COLORS.approvedBg;
-                    boxShadowVal = `inset 0 0 0 3px ${COLORS.birthdayBg}`;
+                    boxShadowVal = (hasJewish || hasIslam) ? `inset 0 0 0 3px ${COLORS.publicBg}` : `inset 0 0 0 3px ${COLORS.birthdayBg}`;
                   }
                 } else {
                   if ((hasPublic || hasSchool) && hasLeave) {
@@ -249,7 +254,10 @@ function MonthCalendar({
 
                 // === Randje voor joodse feestdag (ook bovenop school), niet op verjaardag
                 if (!hasBirthday && hasJewish) {
-                  boxShadowVal = `inset 0 0 0 3px ${COLORS.publicBg}`; // oranje randje
+                  boxShadowVal = `inset 0 0 0 3px ${COLORS.publicBg}`; // oranje randje voor joods
+                } else if (!hasBirthday && hasIslam) {
+                  // gele rand voor islamitische feestdag (zoals gevraagd)
+                  boxShadowVal = `inset 0 0 0 3px ${COLORS.publicBg}`;
                 }
 
                 // Tooltip-items (toon elk aanwezig type)
@@ -257,6 +265,7 @@ function MonthCalendar({
                 if (flags.public) items.push({ kind: "holiday", name: flags.public, subtype: "public" });
                 if (flags.school) items.push({ kind: "holiday", name: flags.school, subtype: "school" });
                 if (flags.jewish) items.push({ kind: "holiday", name: flags.jewish, subtype: "jewish" });
+                if (flags.islam) items.push({ kind: "holiday", name: flags.islam, subtype: "islam" });
                 if (leaves.length > 0) items.push({ kind: "leave", people: leaves });
               }
 
@@ -296,7 +305,7 @@ function MonthCalendar({
               );
             })}
           </div>
-        ))}
+        ))} 
       </div>
     </div>
   );
@@ -339,12 +348,13 @@ function CalendarContent() {
         const map: Record<string, HolidayFlags> = {};
         for (const row of holidays ?? []) {
           const t = (row as any).type as string | null;
-          if (t !== "school" && t !== "public" && t !== "jewish") continue;
+          if (t !== "school" && t !== "public" && t !== "jewish" && t !== "islam") continue;
           const date = (row as any).holiday_date as string;
           if (!map[date]) map[date] = {};
           if (t === "public") map[date].public = (row as any).name as string | undefined;
           if (t === "school") map[date].school = (row as any).name as string | undefined;
           if (t === "jewish") map[date].jewish = (row as any).name as string | undefined;
+          if (t === "islam") map[date].islam = (row as any).name as string | undefined;
         }
         if (isMounted) setHolidaysByDate(map);
       }
@@ -570,6 +580,9 @@ function CalendarContent() {
                   } else if (it.subtype === "jewish") {
                     label = "Joodse feestdag";
                     iconEl = <IconStarOfDavid size={16} color={COLORS.text} />;
+                  } else if (it.subtype === "islam") {
+                    label = "Islamitische feestdag";
+                    iconEl = <MoonStar size={16} strokeWidth={1.5} />;
                   }
                   return (
                     <div key={`h-${idx}`} style={{ display: "flex", alignItems: "center", gap: 8 }}>

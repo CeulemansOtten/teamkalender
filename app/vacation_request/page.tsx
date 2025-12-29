@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import FloatingNav from "../components/FloatingNav";
 import LegendNavVacationRequest from "../components/LegendNav_Vacation_Request";
-import { School, PartyPopper, Cake } from "lucide-react";
+import { School, PartyPopper, Cake, MoonStar } from "lucide-react";
 
 /* ===== Basis UI ===== */
 const FLOATING_NAV_OFFSET = 5;
@@ -72,13 +72,14 @@ type PartStatus = "requested" | "approved" | undefined;
 type ExistingByDate = Record<string, { am?: PartStatus; pm?: PartStatus }>;
 
 /* ===== Feestdagen ===== */
-type HolidaySubtype = "school" | "public" | "jewish";
+type HolidaySubtype = "school" | "public" | "jewish" | "islam";
 
 /** We bewaren ALLE types per dag, i.p.v. 1 type te overschrijven. */
 type HolidayFlags = {
   public?: string; // naam
   school?: string; // naam
   jewish?: string; // naam
+  islam?: string;  // naam
 };
 type HolidayMap = Record<string, HolidayFlags>;
 
@@ -108,17 +109,20 @@ function normPart(v: string): "full" | "am" | "pm" | null {
 }
 
 async function fetchPharmacyHours(pharmacyId: string) {
-  // 1) Probeer detail-rijen (daypart,hours)
-  const trySources = [
-    { table: "pharmacy_hours", filterCol: "pharmacy_id" },
-    { table: "pharmacy",       filterCol: "id" }, // als (daypart,hours) soms rechtstreeks in pharmacy zitten
+  // Probeer eerst detail-rijen (daypart,hours) in tabellen die dat kunnen bevatten.
+  const candidateTables = [
+    { table: "pharmacy_hours", filterCols: ["pharmacy_id", "pharmacy"] },
+    { table: "pharmacy",       filterCols: ["pharmacy", "pharmacy_id", "id"] }, // jouw pharmacy-tabel kan hier daypart/hours bevatten
   ];
-  for (const src of trySources) {
-    const { data, error } = await supabase
-      .from(src.table)
-      .select("daypart, hours")
-      .eq(src.filterCol, pharmacyId);
-    if (!error && Array.isArray(data) && data.length > 0) {
+
+  for (const src of candidateTables) {
+    for (const col of src.filterCols) {
+      const { data, error } = await supabase
+        .from(src.table)
+        .select("daypart, hours")
+        .eq(col, pharmacyId);
+      if (error || !Array.isArray(data) || data.length === 0) continue;
+
       let full = NaN, am = NaN, pm = NaN;
       for (const row of data as any[]) {
         const p = normPart(row.daypart);
@@ -140,7 +144,8 @@ async function fetchPharmacyHours(pharmacyId: string) {
       }
     }
   }
-  // 2) Fallback kolommen op pharmacy
+
+  // Fallback: probeer expliciete kolommen op pharmacy (indien aanwezig)
   const { data: ph } = await supabase
     .from("pharmacy")
     .select("full_day_hours, am_hours, pm_hours")
@@ -152,7 +157,8 @@ async function fetchPharmacyHours(pharmacyId: string) {
     const pm   = Number((ph as any).pm_hours ?? full/2) || full/2;
     return { full, am, pm };
   }
-  // 3) Vangnet
+
+  // Vangnet
   return { full: 8, am: 4, pm: 4 };
 }
 
@@ -161,7 +167,7 @@ type HoverMode = "interactive" | "x-only" | "none";
 
 function DayCell({
   day, bg, hoverMode, state, onCycle, existing, isBirthday,
-  showJewishBorder,
+  showReligiousBorder,
   onHover, items, isFutureDay, revokeSelected, onToggleRevoke,
 }: {
   day: number | null;
@@ -171,7 +177,7 @@ function DayCell({
   onCycle?: () => void;
   existing?: { am?: PartStatus; pm?: PartStatus };
   isBirthday?: boolean;
-  showJewishBorder?: boolean;
+  showReligiousBorder?: boolean;
   onHover?: (e: React.MouseEvent | null, items: TooltipItem[] | null) => void;
   items?: TooltipItem[];
   isFutureDay?: boolean;
@@ -275,9 +281,14 @@ function DayCell({
         <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "50%", background: COLORS.daySelectedBg, borderBottomLeftRadius: 8, borderBottomRightRadius: 8, pointerEvents: "none" }} />
       )}
 
-      {/* Joodse feestdag: oranje randje (ook bovenop schoolvakantie) */}
-      {!isBirthday && showJewishBorder && (
-        <div aria-hidden style={{ position: "absolute", inset: 2, borderRadius: 6, border: `3px solid ${COLORS.publicBg}`, pointerEvents: "none", zIndex: 3 }} />
+      {/* Verjaardag-rand */}
+      {isBirthday && (
+        <div aria-hidden style={{ position: "absolute", inset: 2, borderRadius: 6, border: `2px solid ${COLORS.birthdateBorder}`, pointerEvents: "none", zIndex: 3 }} />
+      )}
+
+      {/* Religieuze rand (joods of islam) — toon altijd, ook bij verjaardag */}
+      {showReligiousBorder && (
+        <div aria-hidden style={{ position: "absolute", inset: 2, borderRadius: 6, border: `3px solid ${COLORS.publicBg}`, pointerEvents: "none", zIndex: 4 }} />
       )}
 
       {/* intrekken-visual */}
@@ -286,11 +297,6 @@ function DayCell({
       )}
 
       <span style={{ position: "relative", zIndex: 3 }}>{day ?? ""}</span>
-
-      {/* Verjaardag-rand */}
-      {isBirthday && (
-        <div aria-hidden style={{ position: "absolute", inset: 2, borderRadius: 6, border: `2px solid ${COLORS.birthdateBorder}`, pointerEvents: "none", zIndex: 3 }} />
-      )}
 
       {/* Centrale knop */}
       {showHover && (interactive || (xOnly && isFutureDay)) && (
@@ -407,6 +413,7 @@ function MonthCalendar({
               if (flags.public) items.push({ kind: "holiday", name: flags.public, subtype: "public" });
               if (flags.school) items.push({ kind: "holiday", name: flags.school, subtype: "school" });
               if (flags.jewish) items.push({ kind: "holiday", name: flags.jewish, subtype: "jewish" });
+              if (flags.islam)  items.push({ kind: "holiday", name: flags.islam,  subtype: "islam" });
 
               if (ex?.am || ex?.pm) {
                 if (ex?.am && ex?.pm && ex.am === ex.pm) {
@@ -421,27 +428,27 @@ function MonthCalendar({
                 }
               }
 
-              // Joodse rand tonen als er Joods is (altijd), óók bovenop school
-              const showJewishBorder = !!flags.jewish;
+              // Religieuze rand tonen als er Joods of Islamitisch is (altijd), óók bovenop school/verjaardag
+              const showReligiousBorder = !!flags.jewish || !!flags.islam;
 
-              return (
-                <DayCell
-                  key={di}
-                  day={day}
-                  bg={baseBg}
-                  hoverMode={hoverMode}
-                  state={state}
-                  existing={ex}
-                  onCycle={() => onCycleDate(key)}
-                  isBirthday={isBirthday}
-                  showJewishBorder={showJewishBorder}
-                  onHover={onHover}
-                  items={items}
-                  isFutureDay={isFutureDay}
-                  revokeSelected={revokeSelected}
-                  onToggleRevoke={() => onToggleRevokeDate(key)}
-                />
-              );
+               return (
+                 <DayCell
+                   key={di}
+                   day={day}
+                   bg={baseBg}
+                   hoverMode={hoverMode}
+                   state={state}
+                   existing={ex}
+                   onCycle={() => onCycleDate(key)}
+                   isBirthday={isBirthday}
+                   showReligiousBorder={showReligiousBorder}
+                   onHover={onHover}
+                   items={items}
+                   isFutureDay={isFutureDay}
+                   revokeSelected={revokeSelected}
+                   onToggleRevoke={() => onToggleRevokeDate(key)}
+                 />
+               );
             })}
           </div>
         ))}
@@ -564,12 +571,13 @@ function VacationRequestContent() {
       const map: HolidayMap = {};
       for (const r of data as any[]) {
         const t = (r.type || "").toString().toLowerCase() as HolidaySubtype;
-        if (t !== "school" && t !== "public" && t !== "jewish") continue;
+        if (t !== "school" && t !== "public" && t !== "jewish" && t !== "islam") continue;
         const date = r.holiday_date as string;
         if (!map[date]) map[date] = {};
         if (t === "public") map[date].public = r.name as string | undefined;
         if (t === "school") map[date].school = r.name as string | undefined;
         if (t === "jewish") map[date].jewish = r.name as string | undefined;
+        if (t === "islam")   map[date].islam   = r.name as string | undefined;
       }
       if (mounted) setHolidayMap(map);
     }
@@ -1108,8 +1116,16 @@ function VacationRequestContent() {
                 if (it.kind === "holiday") {
                   let label = "Feestdag";
                   let iconEl: React.ReactNode = <PartyPopper size={16} strokeWidth={1.5} />;
-                  if (it.subtype === "school") { label = "Schoolvakantie"; iconEl = <School size={16} strokeWidth={1.5} />; }
-                  else if (it.subtype === "jewish") { label = "Joodse feestdag"; iconEl = <IconStarOfDavid size={16} color={COLORS.text} />; }
+                  if (it.subtype === "school") {
+                    label = "Schoolvakantie";
+                    iconEl = <School size={16} strokeWidth={1.5} />;
+                  } else if (it.subtype === "jewish") {
+                    label = "Joodse feestdag";
+                    iconEl = <IconStarOfDavid size={16} color={COLORS.text} />;
+                  } else if (it.subtype === "islam") {
+                    label = "Islamitische feestdag";
+                    iconEl = <MoonStar size={16} strokeWidth={1.5} />;
+                  }
                   return (
                     <div key={`h-${idx}`} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       {iconEl}

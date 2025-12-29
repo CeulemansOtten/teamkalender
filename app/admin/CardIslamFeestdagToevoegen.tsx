@@ -1,4 +1,3 @@
-// app/admin/CardJoodseFeestdagToevoegen.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -73,7 +72,7 @@ function fmtDate(iso: string) {
 }
 
 /* Component */
-export default function CardJoodseFeestdagToevoegen() {
+export default function CardIslamFeestdagToevoegen() {
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [rows, setRows] = useState<Holiday[]>([]);
   const [loading, setLoading] = useState(false);
@@ -89,7 +88,7 @@ export default function CardJoodseFeestdagToevoegen() {
     const { data, error } = await supabase
       .from("holidays")
       .select("id, holiday_date, name, type")
-      .eq("type", "jewish")
+      .eq("type", "islam")
       .gte("holiday_date", range.from)
       .lte("holiday_date", range.to)
       .order("holiday_date", { ascending: true });
@@ -117,7 +116,7 @@ export default function CardJoodseFeestdagToevoegen() {
 
     const { error } = await supabase
       .from("holidays")
-      .insert({ holiday_date: fdDate, name: fdName.trim(), type: "jewish" } as never);
+      .insert({ holiday_date: fdDate, name: fdName.trim(), type: "islam" } as never);
     if (error) return setErr(error.message || "Opslaan mislukt.");
 
     setFdDate("");
@@ -148,7 +147,7 @@ export default function CardJoodseFeestdagToevoegen() {
       {/* Titel + jaar */}
       <div style={{ display: "grid", gridTemplateColumns: "6px 1fr auto", alignItems: "center", columnGap: 8 }}>
         <div style={{ width: 6, height: 20, background: COLORS.primary, borderRadius: 3 }} />
-        <h2 className={variableFont.className} style={{ margin: 0, fontSize: 18 }}>Joodse feestdag toevoegen</h2>
+        <h2 className={variableFont.className} style={{ margin: 0, fontSize: 18 }}>Islamitische feestdag toevoegen</h2>
         <input
           type="number"
           value={year}
@@ -179,7 +178,7 @@ export default function CardJoodseFeestdagToevoegen() {
           style={{ ...baseField, width: DATE_W }}
         />
         <input
-          placeholder="Naam (bv. Jom Kipoer)"
+          placeholder="Naam (bv. Eid al-Fitr)"
           value={fdName}
           onChange={(e) => setFdName(e.target.value)}
           style={{ ...baseField, width: NAME_W }}
@@ -230,7 +229,7 @@ export default function CardJoodseFeestdagToevoegen() {
       <div style={{ display: "grid", gridTemplateColumns: "6px 1fr", columnGap: 8 }}>
         <div style={{ width: 6, height: 22, background: COLORS.primary, borderRadius: 3 }} />
         <h3 className={variableFont.className} style={{ margin: 0, fontSize: 16 }}>
-          Joodse feestdagen in {year}
+          Islamitische feestdagen in {year}
         </h3>
       </div>
 

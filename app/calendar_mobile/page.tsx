@@ -5,7 +5,7 @@ import localFont from "next/font/local";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import { School, PartyPopper, Cake, X } from "lucide-react";
+import { School, PartyPopper, Cake, X, MoonStar } from "lucide-react";
 
 /* ===== Fonts ===== */
 const monthFont = localFont({ src: "../fonts/Font_Variable.otf", display: "swap" });       // Variable
@@ -84,8 +84,8 @@ function getCookie(name: string): string | undefined {
 }
 
 /* ===== Types ===== */
-type HolidayType = "public" | "school" | "jewish";
-type HolidayFlags = { public?: string; school?: string; jewish?: string };
+type HolidayType = "public" | "school" | "jewish" | "islam";
+type HolidayFlags = { public?: string; school?: string; jewish?: string; islam?: string };
 type LeavePerson = { name: string; avatar_url: string | null };
 type TooltipItem =
   | { kind: "holiday"; name: string; subtype: HolidayType }
@@ -96,6 +96,7 @@ function normalizeHolidayType(t: string | null | undefined): HolidayType | null 
   if (!t) return null;
   if (t === "public" || t === "school") return t;
   if (t === "jewish" || t === "other") return "jewish";
+  if (t === "islam") return "islam";
   return null;
 }
 
@@ -158,6 +159,7 @@ function MonthGrid({
                 const hasPublic = !!flags.public;
                 const hasSchool = !!flags.school;
                 const hasJewish = !!flags.jewish;
+                const hasIslam = !!flags.islam; // <-- toegevoegd
                 const hasLeave = leaves.length > 0;
                 const hasBirthday = bdays.length > 0;
 
@@ -192,8 +194,8 @@ function MonthGrid({
                   }
                 }
 
-                // geel randje voor joodse feestdag (tenzij birthday)
-                if (!hasBirthday && hasJewish) {
+                // geel randje voor joodse OF islamitische feestdag (tenzij birthday)
+                if (!hasBirthday && (hasJewish || hasIslam)) {
                   boxShadowVal = `inset 0 0 0 3px ${COLORS.jewishRing}`;
                 }
 
@@ -201,6 +203,7 @@ function MonthGrid({
                 if (flags.public) items.push({ kind: "holiday", name: flags.public, subtype: "public" });
                 if (flags.school) items.push({ kind: "holiday", name: flags.school, subtype: "school" });
                 if (flags.jewish) items.push({ kind: "holiday", name: flags.jewish, subtype: "jewish" });
+                if (flags.islam)  items.push({ kind: "holiday", name: flags.islam,  subtype: "islam" });
                 if (leaves.length > 0) items.push({ kind: "leave", people: leaves });
               }
 
@@ -328,6 +331,7 @@ function CalendarMobileContent() {
           if (t === "public") map[date].public = (row as any).name as string | undefined;
           if (t === "school") map[date].school = (row as any).name as string | undefined;
           if (t === "jewish") map[date].jewish = (row as any).name as string | undefined;
+          if (t === "islam")   map[date].islam   = (row as any).name as string | undefined;
         }
         if (mounted) setHolidaysByDate(map);
       }
@@ -546,10 +550,12 @@ function CalendarMobileContent() {
                 if (it.kind === "holiday") {
                   const label =
                     it.subtype === "school" ? "Schoolvakantie" :
-                    it.subtype === "jewish" ? "Joodse feestdag" : "Feestdag";
+                    it.subtype === "jewish" ? "Joodse feestdag" :
+                    it.subtype === "islam" ? "Islamitische feestdag" : "Feestdag";
                   const icon =
                     it.subtype === "school" ? <School size={18} strokeWidth={1.7} /> :
                     it.subtype === "jewish" ? <IconStarOfDavid size={18} /> :
+                    it.subtype === "islam" ? <MoonStar size={18} strokeWidth={1.7} /> :
                     <PartyPopper size={18} strokeWidth={1.7} />;
                   return (
                     <div key={`h-${idx}`} style={{ display: "flex", alignItems: "center", gap: 10 }}>

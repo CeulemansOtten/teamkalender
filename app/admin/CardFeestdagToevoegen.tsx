@@ -36,7 +36,7 @@ const DATE_COL_PX = 120;
 const LEFT_PAD_PX = 10;
 /* toevoegen: datum NIET smaller, enkel naam smaller */
 const DATE_W = 120;
-const NAME_W = 150;
+const NAME_W = 210;
 const YEAR_W = 80;
 const ADD_BTN_W = 34;
 const ADD_BTN_H = 30;

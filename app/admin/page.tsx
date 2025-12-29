@@ -9,6 +9,7 @@ import CardUrenBeheren from "./CardUrenBeheren";                 // Card 1 (smal
 import CardPersoneelBeheren from "./CardPersoneelBeheren";       // Card 2
 import CardFeestdagToevoegen from "./CardFeestdagToevoegen";     // Card 3
 import CardJoodseFeestdagToevoegen from "./CardJoodseFeestdagToevoegen"; // Card 4
+import CardIslamFeestdagToevoegen from "./CardIslamFeestdagToevoegen";   // nieuwe card
 import CardSchoolvakantieToevoegen from "./CardSchoolvakantieToevoegen"; // Card 5
 
 // (optioneel) als je FloatingNav gebruikt op je project:
@@ -59,11 +60,11 @@ export default function AdminPage() {
           <CardPersoneelBeheren />
         </section>
 
-        {/* Rij 2: Card 3 + Card 4 (zelfde breedte) + Card 5 (breder) */}
+        {/* Rij 2: 3 gelijke cards (Feestdag, Joods, Islam) - passen onder de twee cards erboven */}
         <section
           style={{
             display: "grid",
-            gridTemplateColumns: "360px 360px 560px",
+            gridTemplateColumns: "425px 425px 425px",
             justifyContent: "center",
             justifyItems: "center",
             columnGap: "1%",
@@ -72,7 +73,25 @@ export default function AdminPage() {
         >
           <CardFeestdagToevoegen />
           <CardJoodseFeestdagToevoegen />
-          <CardSchoolvakantieToevoegen />
+          <CardIslamFeestdagToevoegen />
+        </section>
+
+        {/* Rij 3: Schoolvakanties - links uitlijnen en even breed als de eerste twee cards van rij 2 (span 2) */}
+        <section
+          style={{
+            display: "grid",
+            gridTemplateColumns: "425px 425px 425px", // gelijke kolombreedtes als rij 2
+            justifyContent: "center",
+            justifyItems: "start", // items starten links in hun kolom
+            columnGap: "1%",
+            rowGap: 12,
+            marginTop: 12,
+          }}
+        >
+          <div style={{ gridColumn: "1 / span 2", justifySelf: "start" }}>
+            <CardSchoolvakantieToevoegen />
+          </div>
+          <div /> {/* lege placeholder om de derde kolom op te vullen */}
         </section>
       </main>
     </>
