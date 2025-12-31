@@ -55,6 +55,14 @@ function normDaypart(v: string) {
   return s;
 }
 
+function formatShortYMD(ymd: string) {
+  const d = new Date(ymd);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yy = String(d.getFullYear()).slice(2);
+  return `${dd}/${mm}/${yy}`;
+}
+
 export default function ManualInputCard({ COLORS, variableFontClass, onAfterInsert }: Props) {
   const [people, setPeople] = React.useState<Personnel[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -65,11 +73,69 @@ export default function ManualInputCard({ COLORS, variableFontClass, onAfterInse
   const [avatarUrl, setAvatarUrl] = React.useState<string | null>(null);
   const [pharmacy, setPharmacy] = React.useState<string>("");
   const [date, setDate] = React.useState(() => new Date().toISOString().slice(0, 10));
+  const [isRange, setIsRange] = React.useState(false);
+  const [endDate, setEndDate] = React.useState(() => new Date().toISOString().slice(0, 10));
+  const [dayEntries, setDayEntries] = React.useState<Array<{date: string; daypart: string; hours: number; reason: string}>>([]);
   const [daypart, setDaypart] = React.useState<"hele dag" | "voormiddag" | "namiddag" | "andere">("hele dag");
   const [hours, setHours] = React.useState<number>(8.5);
   const [reason, setReason] = React.useState<string>("");
   const [autoApprove, setAutoApprove] = React.useState<boolean>(true);
   const [pharmacyHours, setPharmacyHours] = React.useState<Record<string, number>>({});
+  const [balances, setBalances] = React.useState<Record<string, Record<string, number>>>({});
+
+  React.useEffect(() => {
+    let mounted = true;
+    async function buildEntries() {
+      if (!isRange) {
+        if (mounted) setDayEntries([]);
+        return;
+      }
+      if (!date || !endDate) {
+        if (mounted) setDayEntries([]);
+        return;
+      }
+
+      // ensure start <= end
+      let s = new Date(date);
+      let e = new Date(endDate);
+      if (s > e) {
+        const t = s; s = e; e = t;
+      }
+
+      // fetch public holidays in [s, e]
+      const from = s.toISOString().slice(0, 10);
+      const toEx = new Date(e);
+      toEx.setDate(toEx.getDate() + 1);
+      const to = toEx.toISOString().slice(0, 10);
+      const { data } = await supabase
+        .from("holidays")
+        .select("holiday_date,type")
+        .gte("holiday_date", from)
+        .lt("holiday_date", to)
+        .eq("type", "public");
+      const publicSet = new Set<string>((data || []).map((r: any) => String(r.holiday_date)));
+
+      // preserve any existing per-row choices where possible
+      const prevMap: Record<string, {daypart?: string; hours?: number; reason?: string}> = {};
+      dayEntries.forEach((d) => { prevMap[d.date] = { daypart: d.daypart, hours: d.hours, reason: d.reason }; });
+
+      const entries: Array<{date: string; daypart: string; hours: number; reason: string}> = [];
+      for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+        const ymd = d.toISOString().slice(0, 10);
+        const dow = d.getDay();
+        if (dow === 0 || dow === 6) continue; // skip weekend
+        if (publicSet.has(ymd)) continue; // skip public holiday
+        const prev = prevMap[ymd];
+        entries.push({ date: ymd, daypart: prev?.daypart ?? daypart, hours: prev?.hours ?? hours, reason: prev?.reason ?? "" });
+      }
+
+      // only update if changed to avoid stomping per-row edits
+      const same = entries.length === dayEntries.length && entries.every((e, i) => e.date === dayEntries[i]?.date && e.daypart === dayEntries[i]?.daypart && Number(e.hours) === Number(dayEntries[i]?.hours) && (e.reason || "") === (dayEntries[i]?.reason || ""));
+      if (mounted && !same) setDayEntries(entries);
+    }
+    buildEntries();
+    return () => { mounted = false; };
+  }, [isRange, date, endDate]);
 
   React.useEffect(() => {
     let active = true;
@@ -81,6 +147,10 @@ export default function ManualInputCard({ COLORS, variableFontClass, onAfterInse
   }, []);
 
   React.useEffect(() => {
+    // reset balances and clear only per-row reason when switching personnel
+    setBalances({});
+    setDayEntries((prev) => prev.map((d) => ({ ...d, reason: "" })));
+    setReason("");
     if (!personId) {
       setPharmacy("");
       setAvatarUrl(null);
@@ -114,6 +184,169 @@ export default function ManualInputCard({ COLORS, variableFontClass, onAfterInse
     loadPharmacyHours();
     return () => { active = false; };
   }, [pharmacy]);
+
+  // Compute entitlements and used hours per year and reason for the selected person
+  React.useEffect(() => {
+    let mounted = true;
+    async function loadBalances() {
+      if (!personId) {
+        if (mounted) setBalances({});
+        return;
+      }
+
+      // collect years we need: from dayEntries and single date
+      const years = new Set<number>();
+      if (date) years.add(new Date(date).getFullYear());
+      if (isRange) {
+        dayEntries.forEach((d) => years.add(new Date(d.date).getFullYear()));
+      }
+      if (years.size === 0) {
+        if (mounted) setBalances({});
+        return;
+      }
+
+      const yearsArr = Array.from(years.values());
+
+      // fetch entitlements for these years
+      const { data: ents } = await supabase
+        .from("leave_entitlements")
+        .select("year,total_hours,reason")
+        .eq("personnel_id", personId)
+        .in("year", yearsArr);
+
+      // determine date span to fetch approved leave_requests
+      const minYear = Math.min(...yearsArr);
+      const maxYear = Math.max(...yearsArr);
+      const from = `${minYear}-01-01`;
+      const toEx = new Date(`${maxYear}-12-31`);
+      toEx.setDate(toEx.getDate() + 1);
+      const to = toEx.toISOString().slice(0, 10);
+
+      const { data: usedRows } = await supabase
+        .from("leave_requests")
+        .select("leave_date,entitlement,hours,status")
+        .eq("personnel_id", personId)
+        .eq("status", "approved")
+        .gte("leave_date", from)
+        .lt("leave_date", to);
+
+      const baseMap: Record<number, Record<string, number>> = {};
+      (ents || []).forEach((r: any) => {
+        const y = Number(r.year);
+        if (!baseMap[y]) baseMap[y] = {};
+        const key = (r.reason || "").toString().toLowerCase();
+        baseMap[y][key] = (Number(r.total_hours) || 0) + (baseMap[y][key] || 0);
+      });
+
+      const usedMap: Record<number, Record<string, number>> = {};
+      (usedRows || []).forEach((r: any) => {
+        const y = new Date(r.leave_date).getFullYear();
+        if (!usedMap[y]) usedMap[y] = {};
+        const key = (r.entitlement || "").toString().toLowerCase();
+        usedMap[y][key] = (Number(r.hours) || 0) + (usedMap[y][key] || 0);
+      });
+
+      const bal: Record<string, Record<string, number>> = {};
+      yearsArr.forEach((y) => {
+        const by: Record<string, number> = {};
+        const keys = new Set<string>([
+          ...(Object.keys(baseMap[y] || {})),
+          ...(Object.keys(usedMap[y] || {})),
+        ]);
+        keys.forEach((k) => {
+          const base = (baseMap[y] && baseMap[y][k]) || 0;
+          const used = (usedMap[y] && usedMap[y][k]) || 0;
+          by[k] = base - used;
+        });
+        bal[String(y)] = by;
+      });
+
+      if (mounted) setBalances(bal);
+    }
+    loadBalances();
+    return () => { mounted = false; };
+  }, [personId, date, isRange, endDate, dayEntries]);
+
+  function remainingBalancesBeforeIndex(index: number) {
+    const rem: Record<string, Record<string, number>> = {};
+    Object.keys(balances).forEach((y) => {
+      rem[y] = { ...(balances[y] || {}) };
+    });
+    for (let i = 0; i < index && i < dayEntries.length; i++) {
+      const e = dayEntries[i];
+      const yr = String(new Date(e.date).getFullYear());
+      const r = (e.reason || "").toString().toLowerCase();
+      if (!r || r === "andere") continue;
+      if (!rem[yr]) rem[yr] = {};
+      rem[yr][r] = (rem[yr][r] || 0) - (Number(e.hours) || 0);
+    }
+    return rem;
+  }
+
+  function availableReasonsForAt(index: number, year: number, neededHours: number) {
+    const pref = ["overuren", "adv", "wettelijk"];
+    const rem = remainingBalancesBeforeIndex(index);
+    const by = rem[String(year)] || {};
+    const out: string[] = [];
+    pref.forEach((p) => {
+      if ((by[p] || 0) > neededHours) out.push(p);
+    });
+    return out;
+  }
+
+  // default-select a reason when balances are available and no reason chosen
+  React.useEffect(() => {
+    if (!personId) return;
+    if (!balances || Object.keys(balances).length === 0) return;
+    if (!isRange) {
+      const y = new Date(date).getFullYear();
+      const opts = availableReasonsForAt(0, y, hours);
+      if (opts.length > 0) {
+        if (reason !== opts[0]) setReason(opts[0]);
+      }
+      return;
+    }
+
+    // For ranges we must assign defaults sequentially and deduct each choice
+    setDayEntries((prev) => {
+      const next: typeof prev = [];
+      // clone rem balances to track deductions across rows
+      const rem: Record<string, Record<string, number>> = {};
+      Object.keys(balances).forEach((y) => { rem[y] = { ...(balances[y] || {}) }; });
+
+      for (let i = 0; i < prev.length; i++) {
+        const entry = { ...prev[i] };
+        const yr = String(new Date(entry.date).getFullYear());
+        if (!rem[yr]) rem[yr] = {};
+
+        if (!entry.reason) {
+          const pref = ["overuren", "adv", "wettelijk"];
+          let chosen: string | null = null;
+          for (const p of pref) {
+            if ((rem[yr][p] || 0) > (Number(entry.hours) || 0)) {
+              chosen = p;
+              break;
+            }
+          }
+          if (chosen) {
+            entry.reason = chosen;
+            rem[yr][chosen] = (rem[yr][chosen] || 0) - (Number(entry.hours) || 0);
+          }
+        } else {
+          const r = entry.reason.toString().toLowerCase();
+          if (r && r !== "andere") {
+            rem[yr][r] = (rem[yr][r] || 0) - (Number(entry.hours) || 0);
+          }
+        }
+
+        next.push(entry);
+      }
+
+      // Only update if something changed (simple shallow compare)
+      const changed = next.some((n, i) => n.reason !== prev[i].reason);
+      return changed ? next : prev;
+    });
+  }, [balances, personId, isRange, date, hours, dayEntries]);
 
   const stdHoursFor = React.useCallback(
     (dp: string): number | null => {
@@ -153,8 +386,17 @@ export default function ManualInputCard({ COLORS, variableFontClass, onAfterInse
   if (!personId) missing.push("Medewerker");
   if (personId && !pharmacy) missing.push("Apotheek");
   if (personId && !date) missing.push("Datum");
-  if (personId && !reason) missing.push("Reden");
-  if (personId && (!hours || hours <= 0)) missing.push("Uren");
+  if (personId && isRange) {
+    if (!dayEntries || dayEntries.length === 0) missing.push("Datum");
+    // require every entry to have a reason and positive hours
+    const anyMissingReason = dayEntries.some((e) => !e.reason);
+    if (anyMissingReason) missing.push("Reden");
+    const anyBadHours = dayEntries.some((e) => !e.hours || Number(e.hours) <= 0);
+    if (anyBadHours) missing.push("Uren");
+  } else {
+    if (personId && !reason) missing.push("Reden");
+    if (personId && (!hours || hours <= 0)) missing.push("Uren");
+  }
 
   const isValid = missing.length === 0;
   const tooltip = isValid ? "Toevoegen" : `Vul nog in: ${missing.join(", ")}`;
@@ -167,21 +409,38 @@ export default function ManualInputCard({ COLORS, variableFontClass, onAfterInse
     setLoading(true);
     try {
       const status = autoApprove ? "approved" : "requested";
-      const payload = {
-        personnel_id: personId,
-        leave_date: date,
-        status,
-        daypart,
-        entitlement: reason || null,
-        hours,
-      };
-      const { error } = await supabase.from("leave_requests").insert([payload]);
-      if (error) throw error;
-      setOk(`Verlof toegevoegd (${status === "approved" ? "goedgekeurd" : "aangevraagd"}).`);
+      if (isRange) {
+        const payloads = dayEntries.map((entry) => ({
+          personnel_id: personId,
+          leave_date: entry.date,
+          status,
+          daypart: entry.daypart,
+          entitlement: entry.reason || null,
+          hours: entry.hours,
+        }));
+        const { error } = await supabase.from("leave_requests").insert(payloads);
+        if (error) throw error;
+        setOk(`Verlof toegevoegd (${payloads.length} dagen, ${status === "approved" ? "goedgekeurd" : "aangevraagd"}).`);
+      } else {
+        const payload = {
+          personnel_id: personId,
+          leave_date: date,
+          status,
+          daypart,
+          entitlement: reason || null,
+          hours,
+        };
+        const { error } = await supabase.from("leave_requests").insert([payload]);
+        if (error) throw error;
+        setOk(`Verlof toegevoegd (${status === "approved" ? "goedgekeurd" : "aangevraagd"}).`);
+      }
       setDate(new Date().toISOString().slice(0, 10));
+      setEndDate(new Date().toISOString().slice(0, 10));
+      setIsRange(false);
       setDaypart("hele dag");
       setHours(stdHoursFor("hele dag") ?? 8.5);
       setReason("");
+      setDayEntries([]);
       setAutoApprove(true);
       if (onAfterInsert) onAfterInsert(personId);
     } catch (e: any) {
@@ -271,58 +530,178 @@ export default function ManualInputCard({ COLORS, variableFontClass, onAfterInse
 
           {/* Datum */}
           <div>
-            <label style={{ ...FIELD.label, color: COLORS.textMuted }}>Datum</label>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              style={FIELD.input}
-            />
+            <div style={{ display: "grid", gridTemplateColumns: isRange ? "1fr 1fr" : "1fr", gap: 8 }}>
+              <div>
+                <label style={{ ...FIELD.label, color: COLORS.textMuted }}>{isRange ? "Startdatum" : "Datum"}</label>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  style={FIELD.input}
+                />
+              </div>
+
+              {isRange && (
+                <div>
+                  <label style={{ ...FIELD.label, color: COLORS.textMuted }}>Einddatum</label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    style={FIELD.input}
+                  />
+                </div>
+              )}
+            </div>
+
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, color: COLORS.text, fontSize: 14 }}>
+              <input
+                type="checkbox"
+                checked={isRange}
+                onChange={(e) => {
+                  setIsRange(e.target.checked);
+                  if (e.target.checked) setEndDate(date);
+                }}
+                style={{ width: 16, height: 16 }}
+              />
+              Vakantieperiode ipv 1 dag
+            </label>
+
+            {/* debug panel removed */}
           </div>
 
           {/* Dagdeel + Uren + Reden */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 60px 1fr", gap: 10 }}>
-            <div>
-              <label style={{ ...FIELD.label, color: COLORS.textMuted }}>Dagdeel</label>
-              <select
-                value={daypart}
-                onChange={(e) => setDaypart(e.target.value as any)}
-                style={FIELD.input}
-              >
-                <option value="hele dag">Hele dag</option>
-                <option value="voormiddag">Voormiddag</option>
-                <option value="namiddag">Namiddag</option>
-                <option value="andere">Andere</option>
-              </select>
-            </div>
+          {isRange ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {dayEntries.length === 0 && (
+                <div style={{ color: COLORS.textMuted, fontSize: 13 }}>Geen werkdagen in de geselecteerde periode.</div>
+              )}
 
-            <div>
-              <label style={{ ...FIELD.label, color: COLORS.textMuted }}>Uren</label>
-              <input
-                type="number"
-                inputMode="decimal"
-                step="0.5"
-                min={0.5}
-                value={Number.isFinite(hours) ? String(hours) : ""}
-                onChange={(e) => handleHoursChange(Number(e.target.value))}
-                style={{ ...FIELD.input, textAlign: "right" as const }}
-              />
-            </div>
+              {dayEntries.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "60px 115px 70px 110px", gap: 8, alignItems: "center", marginBottom: -10 }}>
+                  <div />
+                  <div style={{ ...FIELD.label, color: COLORS.textMuted }}>Dagdeel</div>
+                  <div style={{ ...FIELD.label, color: COLORS.textMuted }}>Uren</div>
+                  <div style={{ ...FIELD.label, color: COLORS.textMuted }}>Reden</div>
+                </div>
+              )}
 
-            <div>
-              <label style={{ ...FIELD.label, color: COLORS.textMuted }}>Reden</label>
-              <select
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                style={FIELD.input}
-              >
-                <option value="">—</option>
-                {REASON_CHOICES.map((opt) => (
-                  <option key={opt} value={opt}>{opt[0].toUpperCase() + opt.slice(1)}</option>
-                ))}
-              </select>
+              {dayEntries.map((entry, idx) => (
+                <div key={entry.date} style={{ display: "grid", gridTemplateColumns: "60px 115px 70px 110px", gap: 6, alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", height: 36 }}>
+                    <div style={{ fontSize: 13, color: COLORS.text }}>{formatShortYMD(entry.date)}</div>
+                  </div>
+
+                  <div>
+                    <select
+                      value={entry.daypart}
+                      onChange={(e) => {
+                        const next = [...dayEntries];
+                        next[idx] = { ...next[idx], daypart: e.target.value };
+                        setDayEntries(next);
+                      }}
+                      style={{ ...FIELD.input, marginTop: 0 }}
+                    >
+                      <option value="hele dag">Hele dag</option>
+                      <option value="voormiddag">Voormiddag</option>
+                      <option value="namiddag">Namiddag</option>
+                      <option value="andere">Andere</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.5"
+                      min={0.5}
+                      value={Number.isFinite(entry.hours) ? String(entry.hours) : ""}
+                      onChange={(e) => {
+                        const next = [...dayEntries];
+                        next[idx] = { ...next[idx], hours: Number(e.target.value) };
+                        setDayEntries(next);
+                      }}
+                      style={{ ...FIELD.input, textAlign: "right" as const, marginTop: 0 }}
+                    />
+                  </div>
+
+                  <div>
+                    {(() => {
+                      const year = new Date(entry.date).getFullYear();
+                      const opts = availableReasonsForAt(idx, year, entry.hours);
+                      return (
+                        <select
+                          value={entry.reason}
+                          onChange={(e) => {
+                            const next = [...dayEntries];
+                            next[idx] = { ...next[idx], reason: e.target.value };
+                            setDayEntries(next);
+                          }}
+                          style={{ ...FIELD.input, marginTop: 0 }}
+                        >
+                          <option value="">—</option>
+                          {opts.map((opt) => (
+                            <option key={opt} value={opt}>{opt[0].toUpperCase() + opt.slice(1)}</option>
+                          ))}
+                          <option value="andere">Andere</option>
+                        </select>
+                      );
+                    })()}
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 60px 1fr", gap: 10 }}>
+              <div>
+                <label style={{ ...FIELD.label, color: COLORS.textMuted }}>Dagdeel</label>
+                <select
+                  value={daypart}
+                  onChange={(e) => setDaypart(e.target.value as any)}
+                  style={FIELD.input}
+                >
+                  <option value="hele dag">Hele dag</option>
+                  <option value="voormiddag">Voormiddag</option>
+                  <option value="namiddag">Namiddag</option>
+                  <option value="andere">Andere</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ ...FIELD.label, color: COLORS.textMuted }}>Uren</label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.5"
+                  min={0.5}
+                  value={Number.isFinite(hours) ? String(hours) : ""}
+                  onChange={(e) => handleHoursChange(Number(e.target.value))}
+                  style={{ ...FIELD.input, textAlign: "right" as const }}
+                />
+              </div>
+
+              <div>
+                <label style={{ ...FIELD.label, color: COLORS.textMuted }}>Reden</label>
+                {(() => {
+                  const y = new Date(date).getFullYear();
+                  const opts = availableReasonsForAt(0, y, hours);
+                  return (
+                    <select
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                      style={FIELD.input}
+                    >
+                      <option value="">—</option>
+                      {opts.map((opt) => (
+                        <option key={opt} value={opt}>{opt[0].toUpperCase() + opt.slice(1)}</option>
+                      ))}
+                      <option value="andere">Andere</option>
+                    </select>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
 
           {/* Meteen goedkeuren */}
           <label style={{ display: "flex", alignItems: "center", gap: 8, color: COLORS.text, fontSize: 14 }}>

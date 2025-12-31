@@ -71,7 +71,7 @@ const DOW: Record<number, string> = { 0: "zo", 1: "ma", 2: "di", 3: "woe", 4: "d
 const MONTH = ["jan","feb","mrt","apr","mei","jun","jul","aug","sep","okt","nov","dec"];
 function fmtDate(iso: string) {
   const d = new Date(iso + "T00:00:00");
-  return `${DOW[d.getDay()]} ${d.getDate()} ${MONTH[d.getMonth()]} '${String(d.getFullYear()).slice(-2)}`;
+  return `${DOW[d.getDay()]} ${d.getDate()} ${MONTH[d.getMonth()]}`;
 }
 
 /* Component */

@@ -41,6 +41,8 @@ type LeaveRequest = {
   leave_date: string;            // ISO date
   daypart: "AM" | "PM" | null;   // halve dag -> 4u
   status: string;                // gefilterd op 'approved'
+  entitlement?: string | null;
+  hours?: number | null;
 };
 
 type Person = {
@@ -51,7 +53,23 @@ type Person = {
 };
 
 /* ===== Helpers ===== */
-const hoursToDays = (hours: number) => (hours / 8).toFixed(1);
+const hoursToDays = (hours: number, hoursPerDay = 8) => (hours / (hoursPerDay || 8)).toFixed(1);
+
+// Formatting helpers: use comma as decimal separator and omit ",0"
+const formatHours = (h: number) => {
+  if (h == null || Number.isNaN(h)) return "";
+  const rounded = Math.round(h * 10) / 10;
+  if (Math.round(rounded * 10) % 10 === 0) return String(Math.round(rounded));
+  return String(rounded.toFixed(1)).replace(".", ",");
+};
+
+const formatDays = (hours: number, hoursPerDay: number) => {
+  if (hours == null || Number.isNaN(hours)) return "";
+  const daysNum = hours / (hoursPerDay || 8);
+  const rounded = Math.round(daysNum * 10) / 10;
+  if (Math.round(rounded * 10) % 10 === 0) return String(Math.round(rounded));
+  return String(rounded.toFixed(1)).replace(".", ",");
+};
 
 /* ===== Content ===== */
 function CounterContent() {
@@ -61,6 +79,7 @@ function CounterContent() {
   const [person, setPerson] = useState<Person | null>(null);
   const [entitlements, setEntitlements] = useState<LeaveEntitlement[]>([]);
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
+  const [hoursPerWholeDay, setHoursPerWholeDay] = useState<number>(8);
   const [loading, setLoading] = useState(true);
 
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
@@ -75,10 +94,30 @@ function CounterContent() {
       // Persoon
       const { data: p } = await supabase
         .from("personnel")
-        .select("id, name, surname, avatar_url")
+        .select("id, name, surname, avatar_url, pharmacy")
         .eq("id", personnelId)
         .maybeSingle();
       setPerson((p as Person) || null);
+
+      // determine pharmacy hours-per-whole-day for this person (if available)
+      try {
+        const pharmArr = (p as any)?.pharmacy || [];
+        const pharmName = Array.isArray(pharmArr) && pharmArr.length > 0 ? String(pharmArr[0]) : "";
+        if (pharmName) {
+          const { data: phRow } = await supabase
+            .from("pharmacy")
+            .select("hours, daypart, pharmacy")
+            .eq("pharmacy", pharmName)
+            .eq("daypart", "hele dag")
+            .maybeSingle();
+          const h = phRow && (phRow as any).hours ? Number((phRow as any).hours) : 8;
+          setHoursPerWholeDay(h || 8);
+        } else {
+          setHoursPerWholeDay(8);
+        }
+      } catch (err) {
+        setHoursPerWholeDay(8);
+      }
 
       // Startsaldi
       const { data: ents } = await supabase
@@ -89,7 +128,7 @@ function CounterContent() {
       // Opgenomen (approved)
       const { data: reqs } = await supabase
         .from("leave_requests")
-        .select("id, personnel_id, leave_date, daypart, status")
+        .select("id, personnel_id, leave_date, daypart, status, entitlement, hours")
         .eq("personnel_id", personnelId)
         .in("status", ["approved"]);
 
@@ -112,16 +151,19 @@ function CounterContent() {
     fetchData();
   }, [personnelId]);
 
-  // Opgenomen uren per jaar
-  const requestsPerYear = useMemo(() => {
-    const map: Record<number, number> = {};
+  // Opgenomen uren per jaar en per reden
+  const requestsPerYearPerReason = useMemo(() => {
+    const map: Record<number, Record<string, number>> = {};
     for (const r of requests) {
       const year = new Date(r.leave_date).getFullYear();
-      const taken = r.daypart === "AM" || r.daypart === "PM" ? 4 : 8;
-      map[year] = (map[year] || 0) + taken;
+      const taken = Number(r.hours ?? ((r.daypart === "AM" || r.daypart === "PM") ? (hoursPerWholeDay / 2) : hoursPerWholeDay));
+      // treat empty/null entitlement as 'andere'
+      const reason = (r.entitlement || "andere").toString();
+      if (!map[year]) map[year] = {};
+      map[year][reason] = (map[year][reason] || 0) + taken;
     }
     return map;
-  }, [requests]);
+  }, [requests, hoursPerWholeDay]);
 
   if (!personnelId) {
     return <div style={{ padding: 20 }}>Geen <code>personnel_id</code> meegegeven in de URL.</div>;
@@ -133,8 +175,31 @@ function CounterContent() {
 
   // Data voor gekozen jaar
   const yearEnts = selectedYear ? entitlements.filter((e) => Number(e.year) === selectedYear) : [];
-  const startsaldoHours = yearEnts.reduce((acc, e) => acc + Number(e.total_hours || 0), 0);
-  const takenHours = selectedYear ? requestsPerYear[selectedYear] || 0 : 0;
+  // build totals per reason
+  const reasonTotals: Record<string, number> = {};
+  yearEnts.forEach((e) => {
+    const key = (e.reason || "andere").toString();
+    reasonTotals[key] = (reasonTotals[key] || 0) + Number(e.total_hours || 0);
+  });
+
+  // include any reasons that appear in recorded requests for the selected year
+  const reqReasons: string[] = selectedYear ? Object.keys(requestsPerYearPerReason[selectedYear] || {}) : [];
+  const fullSet = new Set<string>([...Object.keys(reasonTotals), ...reqReasons]);
+  const reasonsList = Array.from(fullSet).filter((rk) => {
+    // hide 'andere' if it has no value (no entitlement, no taken, no saldo)
+    if (rk === "andere") {
+      const totalForReason = reasonTotals[rk] || 0;
+      const takenForReason = selectedYear ? (requestsPerYearPerReason[selectedYear]?.[rk] || 0) : 0;
+      const saldoForReason = totalForReason - takenForReason;
+      return totalForReason !== 0 || takenForReason !== 0 || saldoForReason !== 0;
+    }
+    return true;
+  });
+
+  const startsaldoHours = Object.values(reasonTotals).reduce((acc, v) => acc + v, 0);
+  const takenHours = selectedYear
+    ? Object.values(requestsPerYearPerReason[selectedYear] || {}).reduce((a, b) => a + b, 0)
+    : 0;
   const saldoHours = startsaldoHours - takenHours;
 
   // === Styles ===
@@ -295,29 +360,34 @@ function CounterContent() {
                 </thead>
 
                 <tbody>
-                  {/* Per reason: startsaldo; Opgenomen/Saldo niet per reason — */}
-                  {yearEnts.map((e) => (
-                    <tr key={e.id} style={{ borderBottom: `1px solid ${COLORS.line}` }}>
-                      <td style={{ ...tdBase, textAlign: "left" }}>{e.reason || "-"}</td>
-                      <td style={tdValWhite}>{e.total_hours}</td>
-                      <td style={tdValWhite}>{hoursToDays(e.total_hours)}</td>
-                      <td style={{ ...tdVal, color: COLORS.textMuted }}>—</td>
-                      <td style={{ ...tdValWhite, color: COLORS.textMuted }}>—</td>
-                      <td style={{ ...tdValWhite, color: COLORS.textMuted }}>—</td>
-                    </tr>
-                  ))}
+                  {/* Per reason: startsaldo; Opgenomen en Saldo per reason */}
+                  {reasonsList.map((reasonKey) => {
+                    const totalForReason = reasonTotals[reasonKey] || 0;
+                    const takenForReason = selectedYear ? (requestsPerYearPerReason[selectedYear]?.[reasonKey] || 0) : 0;
+                    const saldoForReason = totalForReason - takenForReason;
+                    return (
+                      <tr key={reasonKey} style={{ borderBottom: `1px solid ${COLORS.line}` }}>
+                          <td style={{ ...tdBase, textAlign: "left" }}>{reasonKey === "" ? "-" : (reasonKey[0].toUpperCase() + reasonKey.slice(1))}</td>
+                          <td style={tdValWhite}>{formatHours(totalForReason)}</td>
+                          <td style={tdValWhite}>{formatDays(totalForReason, hoursPerWholeDay)}</td>
+                          <td style={{ ...tdVal }}>{formatHours(takenForReason)}</td>
+                          <td style={{ ...tdValWhite }}>{formatHours(saldoForReason)}</td>
+                          <td style={{ ...tdValWhite }}>{formatDays(saldoForReason, hoursPerWholeDay)}</td>
+                        </tr>
+                    );
+                  })}
                 </tbody>
 
                 <tfoot>
                   {/* Accentlijn 2px boven Totaal + cijfers in accentkleur */}
-                  <tr style={{ borderTop: totalTopBorder, fontWeight: 700 }}>
-                    <td style={{ ...tdBase, textAlign: "left", color: COLORS.primary }}>Totaal</td>
-                    <td style={{ ...tdValWhite, color: COLORS.primary }}>{startsaldoHours}</td>
-                    <td style={{ ...tdValWhite, color: COLORS.primary }}>{hoursToDays(startsaldoHours)}</td>
-                    <td style={{ ...tdVal, color: COLORS.primary }}>{takenHours}</td>
-                    <td style={{ ...tdValWhite, color: COLORS.primary }}>{saldoHours}</td>
-                    <td style={{ ...tdValWhite, color: COLORS.primary }}>{hoursToDays(saldoHours)}</td>
-                  </tr>
+                    <tr style={{ borderTop: totalTopBorder, fontWeight: 700 }}>
+                      <td style={{ ...tdBase, textAlign: "left", color: COLORS.primary }}>Totaal</td>
+                      <td style={{ ...tdValWhite, color: COLORS.primary }}>{formatHours(startsaldoHours)}</td>
+                      <td style={{ ...tdValWhite, color: COLORS.primary }}>{formatDays(startsaldoHours, hoursPerWholeDay)}</td>
+                      <td style={{ ...tdVal, color: COLORS.primary }}>{formatHours(takenHours)}</td>
+                      <td style={{ ...tdValWhite, color: COLORS.primary }}>{formatHours(saldoHours)}</td>
+                      <td style={{ ...tdValWhite, color: COLORS.primary }}>{formatDays(saldoHours, hoursPerWholeDay)}</td>
+                    </tr>
                 </tfoot>
               </table>
             </div>

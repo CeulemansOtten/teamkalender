@@ -85,12 +85,17 @@ function* eachDateInclusive(startISO: string, endISO: string) {
 
 const DOW: Record<number, string> = { 0: "zo", 1: "ma", 2: "di", 3: "woe", 4: "do", 5: "vr", 6: "za" };
 const MONTH = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+function parseDateParts(iso: string) {
+  const d = new Date(iso + "T00:00:00");
+  return { dow: DOW[d.getDay()], day: d.getDate(), month: MONTH[d.getMonth()] };
+}
+
 const fmtRange = (s: string, e: string) => {
-  const sd = new Date(s + "T00:00:00");
-  const ed = new Date(e + "T00:00:00");
-  return `${DOW[sd.getDay()]} ${sd.getDate()} - ${DOW[ed.getDay()]} ${ed.getDate()} ${MONTH[ed.getMonth()]} '${String(
-    ed.getFullYear()
-  ).slice(-2)}`;
+  const a = parseDateParts(s);
+  const b = parseDateParts(e);
+  if (s === e) return `${a.dow} ${a.day} ${a.month}`;
+  if (a.month === b.month) return `${a.dow} ${a.day} - ${b.dow} ${b.day} ${a.month}`;
+  return `${a.dow} ${a.day} ${a.month} - ${b.dow} ${b.day} ${b.month}`;
 };
 
 export default function CardSchoolvakantieToevoegen() {
