@@ -120,6 +120,20 @@ export default function LoginPage() {
 
     if (typeof window !== "undefined") {
       localStorage.setItem("logged_in_personnel_id", selectedId);
+      // iOS Safari zoom fix: reset viewport and scroll
+      setTimeout(() => {
+        // Scroll naar boven en reset zoom
+        window.scrollTo(0, 0);
+        // Probeer meta viewport te resetten
+        const meta = document.querySelector('meta[name="viewport"]');
+        if (meta) {
+          meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0');
+          // Na korte tijd weer user-scalable toestaan
+          setTimeout(() => {
+            meta.setAttribute('content', 'width=device-width, initial-scale=1.0');
+          }, 500);
+        }
+      }, 100);
     }
     router.push(`/after_login/?personnel_id=${encodeURIComponent(selectedId)}`);
   }

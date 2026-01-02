@@ -33,7 +33,9 @@ const CARD_WIDTH = 457;
 const DATE_COL_PX = 150;
 const LEFT_PAD_PX = 10;
 const DATE_W = 125;
+const DATE_W_SMALL = 118;
 const NAME_W = 210;
+const NAME_W_SMALL = 90;
 const YEAR_W = 80;
 const ADD_BTN_W = 34;
 const ADD_BTN_H = 30;
@@ -69,10 +71,15 @@ const MONTH = ["jan","feb","mrt","apr","mei","jun","jul","aug","sep","okt","nov"
 
 function parseDateParts(iso: string) {
   const d = new Date(iso + "T00:00:00");
-  return { dow: DOW[d.getDay()], day: d.getDate(), month: MONTH[d.getMonth()] };
+  return {
+    dow: DOW[d.getDay()],
+    day: d.getDate(),
+    month: MONTH[d.getMonth()],
+    year: String(d.getFullYear()).slice(2), // yy notatie
+  };
 }
 
-// format either a single date or a consecutive range (omit year)
+// format either a single date or a consecutive range (zonder jaartal)
 function formatRangeOrSingle(startIso: string, endIso: string) {
   const a = parseDateParts(startIso);
   const b = parseDateParts(endIso);
@@ -88,7 +95,9 @@ export default function CardIslamFeestdagToevoegen() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [fdDate, setFdDate] = useState("");
+  const [fdEndDate, setFdEndDate] = useState("");
   const [fdName, setFdName] = useState("");
+  const [isRange, setIsRange] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
@@ -123,16 +132,39 @@ export default function CardIslamFeestdagToevoegen() {
     e.preventDefault();
     setErr("");
     if (!fdDate || !fdName.trim()) return setErr("Geef een datum en een naam in.");
-    if (new Date(fdDate).getFullYear() !== year) return setErr(`Datum moet in ${year} liggen.`);
-
-    const { error } = await supabase
-      .from("holidays")
-      .insert({ holiday_date: fdDate, name: fdName.trim(), type: "islam" } as never);
-    if (error) return setErr(error.message || "Opslaan mislukt.");
-
-    setFdDate("");
-    setFdName("");
-    await load();
+    if (isRange) {
+      if (!fdEndDate) return setErr("Geef een einddatum in.");
+      if (fdEndDate < fdDate) return setErr("Einddatum mag niet voor begindatum liggen.");
+      if (new Date(fdDate).getFullYear() !== year || new Date(fdEndDate).getFullYear() !== year) return setErr(`Beide datums moeten in ${year} liggen.`);
+      // Voeg alle dagen in het bereik toe
+      const start = new Date(fdDate);
+      const end = new Date(fdEndDate);
+      const days = [];
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        days.push(new Date(d));
+      }
+      const inserts = days.map((d) => ({
+        holiday_date: d.toISOString().slice(0, 10),
+        name: fdName.trim(),
+        type: "islam",
+      }));
+      const { error } = await supabase.from("holidays").insert(inserts as never);
+      if (error) return setErr(error.message || "Opslaan mislukt.");
+      setFdDate("");
+      setFdEndDate("");
+      setFdName("");
+      await load();
+      return;
+    } else {
+      if (new Date(fdDate).getFullYear() !== year) return setErr(`Datum moet in ${year} liggen.`);
+      const { error } = await supabase
+        .from("holidays")
+        .insert({ holiday_date: fdDate, name: fdName.trim(), type: "islam" } as never);
+      if (error) return setErr(error.message || "Opslaan mislukt.");
+      setFdDate("");
+      setFdName("");
+      await load();
+    }
   };
 
   const remove = async (id: string) => {
@@ -212,7 +244,9 @@ export default function CardIslamFeestdagToevoegen() {
         style={{
           width: "100%",
           display: "grid",
-          gridTemplateColumns: `auto ${NAME_W}px ${ADD_BTN_W}px`,
+          gridTemplateColumns: isRange
+            ? `${DATE_W_SMALL}px ${DATE_W_SMALL}px ${NAME_W_SMALL}px ${ADD_BTN_W}px`
+            : `${DATE_W}px ${NAME_W}px ${ADD_BTN_W}px`,
           gap: 10,
           alignItems: "center",
         }}
@@ -221,13 +255,22 @@ export default function CardIslamFeestdagToevoegen() {
           type="date"
           value={fdDate}
           onChange={(e) => setFdDate(e.target.value)}
-          style={{ ...baseField, width: DATE_W }}
+          style={{ ...baseField, width: isRange ? DATE_W_SMALL : DATE_W }}
         />
+        {isRange && (
+          <input
+            type="date"
+            value={fdEndDate}
+            min={fdDate}
+            onChange={(e) => setFdEndDate(e.target.value)}
+            style={{ ...baseField, width: DATE_W_SMALL }}
+          />
+        )}
         <input
           placeholder="Naam (bv. Eid al-Fitr)"
           value={fdName}
           onChange={(e) => setFdName(e.target.value)}
-          style={{ ...baseField, width: NAME_W }}
+          style={{ ...baseField, width: isRange ? NAME_W_SMALL : NAME_W }}
         />
         <button
           type="submit"
@@ -253,6 +296,18 @@ export default function CardIslamFeestdagToevoegen() {
         >
           +
         </button>
+        {/* Checkbox onder de velden */}
+        <div style={{ gridColumn: `1 / span ${isRange ? 4 : 3}` }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, marginTop: 0 }}>
+            <input
+              type="checkbox"
+              checked={isRange}
+              onChange={(e) => setIsRange(e.target.checked)}
+              style={{ marginRight: 4 }}
+            />
+            Periode ipv 1 dag
+          </label>
+        </div>
       </form>
 
       {err && (
@@ -272,7 +327,7 @@ export default function CardIslamFeestdagToevoegen() {
       )}
 
       {/* Subtitel lijst */}
-      <div style={{ display: "grid", gridTemplateColumns: "6px 1fr", columnGap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "6px 1fr", columnGap: 8, marginTop: 10 }}>
         <div style={{ width: 6, height: 22, background: COLORS.primary, borderRadius: 3 }} />
         <h3 className={variableFont.className} style={{ margin: 0, fontSize: 16 }}>
           Islamitische feestdagen in {year}

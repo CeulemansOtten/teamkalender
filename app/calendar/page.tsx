@@ -313,7 +313,7 @@ function MonthCalendar({
 
 /* ===== Inhoud van de pagina ===== */
 function CalendarContent() {
-  const [year, setYear] = useState(2025);
+  const [year, setYear] = useState(new Date().getFullYear());
 
   // Nu: meerdere holiday-flags per datum
   const [holidaysByDate, setHolidaysByDate] = useState<Record<string, HolidayFlags>>({});

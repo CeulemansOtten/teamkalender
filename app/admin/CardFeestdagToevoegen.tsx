@@ -3,7 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
-import localFont from "next/font/local"; // ⬅️ toegevoegd
+import localFont from "next/font/local";
 
 /* ====== UI (match met page) ====== */
 const COLORS = {
@@ -31,12 +31,12 @@ const baseField: React.CSSProperties = {
 
 /* Breedtes/hoogtes */
 const CARD_WIDTH = 457;
-/* lijst: maak datumkolom smaller → meer ruimte voor naam */
-const DATE_COL_PX = 120;
+const DATE_COL_PX = 150;
 const LEFT_PAD_PX = 10;
-/* toevoegen: datum NIET smaller, enkel naam smaller */
-const DATE_W = 120;
+const DATE_W = 125;
+const DATE_W_SMALL = 118;
 const NAME_W = 210;
+const NAME_W_SMALL = 90;
 const YEAR_W = 80;
 const ADD_BTN_W = 34;
 const ADD_BTN_H = 30;
@@ -69,20 +69,33 @@ type Holiday = {
 };
 const DOW: Record<number, string> = { 0: "zo", 1: "ma", 2: "di", 3: "woe", 4: "do", 5: "vr", 6: "za" };
 const MONTH = ["jan","feb","mrt","apr","mei","jun","jul","aug","sep","okt","nov","dec"];
-function fmtDate(iso: string) {
+
+function parseDateParts(iso: string) {
   const d = new Date(iso + "T00:00:00");
-  return `${DOW[d.getDay()]} ${d.getDate()} ${MONTH[d.getMonth()]}`;
+  return { dow: DOW[d.getDay()], day: d.getDate(), month: MONTH[d.getMonth()] };
+}
+
+// format either a single date or a consecutive range (omit year)
+function formatRangeOrSingle(startIso: string, endIso: string) {
+  const a = parseDateParts(startIso);
+  const b = parseDateParts(endIso);
+  if (startIso === endIso) return `${a.dow} ${a.day} ${a.month}`;
+  if (a.month === b.month) return `${a.dow} ${a.day} - ${b.dow} ${b.day} ${a.month}`;
+  return `${a.dow} ${a.day} ${a.month} - ${b.dow} ${b.day} ${b.month}`;
 }
 
 /* Component */
-export default function CardFeestdagToevoegen() {
+export default function CardJoodseFeestdagToevoegen() {
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [rows, setRows] = useState<Holiday[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [fdDate, setFdDate] = useState("");
+  const [fdEndDate, setFdEndDate] = useState("");
   const [fdName, setFdName] = useState("");
+  const [isRange, setIsRange] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   const range = useMemo(() => ({ from: `${year}-01-01`, to: `${year}-12-31` }), [year]);
 
@@ -115,16 +128,39 @@ export default function CardFeestdagToevoegen() {
     e.preventDefault();
     setErr("");
     if (!fdDate || !fdName.trim()) return setErr("Geef een datum en een naam in.");
-    if (new Date(fdDate).getFullYear() !== year) return setErr(`Datum moet in ${year} liggen.`);
-
-    const { error } = await supabase
-      .from("holidays")
-      .insert({ holiday_date: fdDate, name: fdName.trim(), type: "public" } as never);
-    if (error) return setErr(error.message || "Opslaan mislukt.");
-
-    setFdDate("");
-    setFdName("");
-    await load();
+    if (isRange) {
+      if (!fdEndDate) return setErr("Geef een einddatum in.");
+      if (fdEndDate < fdDate) return setErr("Einddatum mag niet voor begindatum liggen.");
+      if (new Date(fdDate).getFullYear() !== year || new Date(fdEndDate).getFullYear() !== year) return setErr(`Beide datums moeten in ${year} liggen.`);
+      // Voeg alle dagen in het bereik toe
+      const start = new Date(fdDate);
+      const end = new Date(fdEndDate);
+      const days = [];
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        days.push(new Date(d));
+      }
+      const inserts = days.map((d) => ({
+        holiday_date: d.toISOString().slice(0, 10),
+        name: fdName.trim(),
+        type: "public",
+      }));
+      const { error } = await supabase.from("holidays").insert(inserts as never);
+      if (error) return setErr(error.message || "Opslaan mislukt.");
+      setFdDate("");
+      setFdEndDate("");
+      setFdName("");
+      await load();
+      return;
+    } else {
+      if (new Date(fdDate).getFullYear() !== year) return setErr(`Datum moet in ${year} liggen.`);
+      const { error } = await supabase
+        .from("holidays")
+        .insert({ holiday_date: fdDate, name: fdName.trim(), type: "public" } as never);
+      if (error) return setErr(error.message || "Opslaan mislukt.");
+      setFdDate("");
+      setFdName("");
+      await load();
+    }
   };
 
   const remove = async (id: string) => {
@@ -132,6 +168,40 @@ export default function CardFeestdagToevoegen() {
     if (error) return setErr(error.message || "Verwijderen mislukt.");
     setRows((prev) => prev.filter((r) => r.id !== id));
   };
+
+  const removeMany = async (ids: string[]) => {
+    if (!ids || ids.length === 0) return;
+    const { error } = await supabase.from("holidays").delete().in("id", ids);
+    if (error) return setErr(error.message || "Verwijderen mislukt.");
+    const idSet = new Set(ids);
+    setRows((prev) => prev.filter((r) => !idSet.has(r.id)));
+  };
+
+  function groupHolidays(list: Holiday[]) {
+    if (!list || list.length === 0) return [] as Array<{ start: string; end: string; name: string; ids: string[] }>;
+    const out: Array<{ start: string; end: string; name: string; ids: string[] }> = [];
+    for (const h of list) {
+      const dateIso = h.holiday_date;
+      if (out.length === 0) {
+        out.push({ start: dateIso, end: dateIso, name: h.name, ids: [h.id] });
+        continue;
+      }
+      const last = out[out.length - 1];
+      const lastEnd = new Date(last.end + "T00:00:00");
+      const cur = new Date(dateIso + "T00:00:00");
+      const diffDays = Math.round((cur.getTime() - lastEnd.getTime()) / (1000 * 60 * 60 * 24));
+      // merge when same name and dates are consecutive
+      if (h.name === last.name && diffDays === 1) {
+        last.end = dateIso;
+        last.ids.push(h.id);
+      } else {
+        out.push({ start: dateIso, end: dateIso, name: h.name, ids: [h.id] });
+      }
+    }
+    return out;
+  }
+
+  const groups = React.useMemo(() => groupHolidays(rows), [rows]);
 
   return (
     <div
@@ -163,30 +233,39 @@ export default function CardFeestdagToevoegen() {
         />
       </div>
 
-      {/* Form: datum (normaal) + kleinere naam + kleine + */}
+      {/* Form */}
       <form
         onSubmit={onAdd}
         style={{
           width: "100%",
           display: "grid",
-          gridTemplateColumns: `auto ${NAME_W}px ${ADD_BTN_W}px`,
+          gridTemplateColumns: isRange
+            ? `${DATE_W_SMALL}px ${DATE_W_SMALL}px ${NAME_W_SMALL}px ${ADD_BTN_W}px`
+            : `${DATE_W}px ${NAME_W}px ${ADD_BTN_W}px`,
           gap: 10,
           alignItems: "center",
         }}
       >
-        {/* Datum NIET kleiner gemaakt */}
         <input
           type="date"
           value={fdDate}
           onChange={(e) => setFdDate(e.target.value)}
-          style={{ ...baseField, width: DATE_W }}
+          style={{ ...baseField, width: isRange ? DATE_W_SMALL : DATE_W }}
         />
-        {/* Alleen NAAM-veld wat smaller */}
+        {isRange && (
+          <input
+            type="date"
+            value={fdEndDate}
+            min={fdDate}
+            onChange={(e) => setFdEndDate(e.target.value)}
+            style={{ ...baseField, width: DATE_W_SMALL }}
+          />
+        )}
         <input
           placeholder="Naam (bv. Kerstmis)"
           value={fdName}
           onChange={(e) => setFdName(e.target.value)}
-          style={{ ...baseField, width: NAME_W }}
+          style={{ ...baseField, width: isRange ? NAME_W_SMALL : NAME_W }}
         />
         <button
           type="submit"
@@ -197,14 +276,12 @@ export default function CardFeestdagToevoegen() {
             minWidth: ADD_BTN_W,
             background: COLORS.btnBg,
             textAlign: "center",
-            //border: `1px solid ${COLORS.btnBorder}`,
             color: COLORS.btnText,
             borderRadius: 8,
             cursor: "pointer",
             fontWeight: 800,
             fontSize: 16,
             lineHeight: 1,
-            /* plus gecentreerd */
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
@@ -214,6 +291,18 @@ export default function CardFeestdagToevoegen() {
         >
           +
         </button>
+        {/* Checkbox onder de velden */}
+        <div style={{ gridColumn: `1 / span ${isRange ? 4 : 3}` }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, marginTop: 0 }}>
+            <input
+              type="checkbox"
+              checked={isRange}
+              onChange={(e) => setIsRange(e.target.checked)}
+              style={{ marginRight: 4 }}
+            />
+            Periode ipv 1 dag
+          </label>
+        </div>
       </form>
 
       {err && (
@@ -233,15 +322,9 @@ export default function CardFeestdagToevoegen() {
       )}
 
       {/* Subtitel lijst */}
-      <div style={{ display: "grid", gridTemplateColumns: "6px 1fr", columnGap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "6px 1fr", columnGap: 8, marginTop: 10 }}>
         <div style={{ width: 6, height: 22, background: COLORS.primary, borderRadius: 3 }} />
-        <h3
-          className={variableFont.className} // ⬅️ variable font toepassen
-          style={{
-            margin: 0,
-            fontSize: 16,
-          }}
-        >
+        <h3 className={variableFont.className} style={{ margin: 0, fontSize: 16 }}>
           Feestdagen in {year}
         </h3>
       </div>
@@ -253,14 +336,13 @@ export default function CardFeestdagToevoegen() {
         <div style={{ color: COLORS.textMuted }}>Geen feestdagen gevonden.</div>
       ) : (
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-          {rows.map((h) => (
+          {groups.map((g, idx) => (
             <li
-              key={h.id}
-              onMouseEnter={() => setHoveredId(h.id)}
-              onMouseLeave={() => setHoveredId(null)}
+              key={`${g.start}_${g.end}_${g.name}_${idx}`}
+              onMouseEnter={() => setHoveredIndex(idx)}
+              onMouseLeave={() => setHoveredIndex(null)}
               style={{
                 display: "grid",
-                /* datum smaller → naam 1fr krijgt meer ruimte */
                 gridTemplateColumns: `${LEFT_PAD_PX}px ${DATE_COL_PX - LEFT_PAD_PX}px 1fr auto`,
                 alignItems: "center",
                 borderBottom: `1px solid ${COLORS.line}`,
@@ -269,17 +351,19 @@ export default function CardFeestdagToevoegen() {
               }}
             >
               <div aria-hidden />
-              <div style={{ color: COLORS.textMuted, fontSize: 14 }}>{fmtDate(h.holiday_date)}</div>
-              <div style={{ color: COLORS.text, fontSize: 15 }}>{h.name}</div>
+              <div style={{ color: COLORS.textMuted, fontSize: 14 }}>
+                {formatRangeOrSingle(g.start, g.end)}
+              </div>
+              <div style={{ color: COLORS.text, fontSize: 15 }}>{g.name}</div>
               <button
                 aria-label="Verwijderen"
-                onClick={() => remove(h.id)}
-                title="Verwijderen"
+                onClick={() => removeMany(g.ids)}
+                title={g.ids.length > 1 ? `Verwijderen (${g.ids.length} datums)` : "Verwijderen"}
                 style={{
                   background: "transparent",
                   border: "none",
                   cursor: "pointer",
-                  opacity: hoveredId === h.id ? 1 : 0,
+                  opacity: hoveredIndex === idx ? 1 : 0,
                   transition: "opacity 120ms ease",
                 }}
               >
