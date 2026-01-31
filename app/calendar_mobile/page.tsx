@@ -438,9 +438,8 @@ function CalendarMobileContent() {
     btn.blur();
   };
 
-  // bouw href naar vacation_request_mobile met personnel_id
-  const vacationHref = useMemo(() => {
-    const base = "/vacation_request_mobile";
+  const planningHref = useMemo(() => {
+    const base = "/planning_mobile";
     if (!personnelId) return base;
     const sp = new URLSearchParams({ personnel_id: personnelId });
     return `${base}?${sp.toString()}`;
@@ -613,29 +612,26 @@ function CalendarMobileContent() {
           zIndex: 60,
         }}
       >
-        <Link
-          href={(() => {
-            const base = "/vacation_request_mobile";
-            if (!personnelId) return base;
-            const sp = new URLSearchParams({ personnel_id: personnelId });
-            return `${base}?${sp.toString()}`;
-          })()}
-          className={monthFont.className}
-          style={{
-            display: "block",
-            width: "100%",
-            textAlign: "center",
-            padding: "14px 16px",
-            borderRadius: 12,
-            background: COLORS.primary,
-            color: "#fff",
-            fontWeight: 900, // BOLD
-            textDecoration: "none",
-            letterSpacing: 0.2,
-          }}
-        >
-          Verlof aanvragen
-        </Link>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <Link
+            href={planningHref}
+            className={monthFont.className}
+            style={{
+              display: "block",
+              width: "100%",
+              textAlign: "center",
+              padding: "14px 16px",
+              borderRadius: 12,
+              background: COLORS.primary,
+              color: "#fff",
+              fontWeight: 900, // BOLD
+              textDecoration: "none",
+              letterSpacing: 0.2,
+            }}
+          >
+            Planning bekijken
+          </Link>
+        </div>
       </div>
     </>
   );

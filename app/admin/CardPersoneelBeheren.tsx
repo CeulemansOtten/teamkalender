@@ -24,6 +24,9 @@ const SYS_FONT = "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif"
 // kolombreedtes
 const FIELD_W = 140;
 const PHARMACY_W = 170; // breder voor de apotheeknaam
+const NAME_W = 120;
+const DATE_W = 130;
+const ACTIVE_W = 34;
 
 const baseField: React.CSSProperties = {
   height: 36,
@@ -46,6 +49,10 @@ const PHARMACY_OPTIONS = [
   "Apotheek Minerva",
   "Eeuwfeestapotheek",
 ] as const;
+
+// Status options
+// Keep replacement statuses grouped at the end in dropdowns.
+const REPLACEMENT_STATUS_OPTIONS = ["replacement"] as const;
 
 /* ====== Iconen (zelfde stijl als originele page) ====== */
 function IconTrash({ color = COLORS.primary, size = 18 }: { color?: string; size?: number }) {
@@ -94,6 +101,7 @@ type Personnel = {
   status: string | null;
   birthdate: string | null; // ISO yyyy-mm-dd in UI-state
   pharmacy_single: string | ""; // UI: enkele keuze; DB: array met 0/1 item
+  active: string | null;
 };
 
 type ConfirmState =
@@ -193,9 +201,81 @@ function ConfirmModal({
 /* ====== Component ====== */
 export default function CardPersoneelBeheren() {
   const [people, setPeople] = useState<Personnel[]>([]);
-  const [statusOptions, setStatusOptions] = useState<string[]>(["active", "inactive"]);
+  // Store canonical DB values, but display Dutch labels.
+  const BASE_STATUS_OPTIONS = ["pharmacist", "assistant", "owner"] as const;
+  const [statusOptions, setStatusOptions] = useState<string[]>([...BASE_STATUS_OPTIONS, ...REPLACEMENT_STATUS_OPTIONS]);
   const [err, setErr] = useState("");
   const [hoveredAvatarId, setHoveredAvatarId] = useState<string | null>(null);
+  const [savingActiveId, setSavingActiveId] = useState<string | null>(null);
+
+  const dispatchBrowserEvent = (name: string, detail?: unknown) => {
+    try {
+      window.dispatchEvent(new CustomEvent(name, { detail }));
+      return;
+    } catch {
+      // fall back below
+    }
+    try {
+      window.dispatchEvent(new Event(name));
+    } catch {
+      // no-op
+    }
+  };
+
+  const dispatchPersonnelUpdated = (detail?: unknown) => {
+    dispatchBrowserEvent("personnel-updated", detail);
+  };
+
+  // Map DB / legacy status values to the label we want to show in the UI.
+  const STATUS_LABELS: Record<string, string> = {
+    // canonical DB values
+    pharmacist: "Apotheker",
+    assistant: "Assistent",
+    owner: "Eigenaar",
+    replacement: "Vervanger",
+
+    // already-canonical Dutch values (keep as-is)
+    apotheker: "Apotheker",
+    assistent: "Assistent",
+
+    eigenaar: "Eigenaar",
+    vervanger: "Vervanger",
+  };
+
+  const STATUS_CANONICAL: Record<string, string> = {
+    // canonical DB values
+    pharmacist: "pharmacist",
+    assistant: "assistant",
+    owner: "owner",
+    replacement: "replacement",
+
+    // Dutch/legacy values
+    apotheker: "pharmacist",
+    assistent: "assistant",
+    eigenaar: "owner",
+    vervanger: "replacement",
+  };
+
+  const statusLabel = (value: string) => {
+    const key = String(value || "").trim().toLowerCase();
+    return STATUS_LABELS[key] ?? value;
+  };
+
+  const canonicalStatusValue = (value: unknown): string | null => {
+    const raw = String(value ?? "").trim();
+    if (!raw) return null;
+    const key = raw.toLowerCase();
+    return STATUS_CANONICAL[key] ?? raw;
+  };
+
+  const isActiveFlag = (value: unknown) => {
+    const v = String(value ?? "").trim().toLowerCase();
+    return v === "yes" || v === "ja" || v === "true" || v === "1";
+  };
+
+  const canonicalActiveValue = (value: unknown): "yes" | "no" => {
+    return isActiveFlag(value) ? "yes" : "no";
+  };
 
   // Confirm modal state
   const [confirm, setConfirm] = useState<ConfirmState>({ open: false });
@@ -204,7 +284,8 @@ export default function CardPersoneelBeheren() {
   const [newName, setNewName] = useState("");
   const [newSurname, setNewSurname] = useState("");
   const [newBirthdate, setNewBirthdate] = useState(""); // ISO yyyy-mm-dd
-  const [newStatus, setNewStatus] = useState("active");
+  const [newStatus, setNewStatus] = useState<string>(BASE_STATUS_OPTIONS[0]);
+  const [newStatusTouched, setNewStatusTouched] = useState(false);
   const [newPharmacy, setNewPharmacy] = useState<string>(""); // single-select
 
   // Data ophalen
@@ -212,7 +293,7 @@ export default function CardPersoneelBeheren() {
     (async () => {
       const { data, error } = await supabase
         .from("personnel")
-        .select("id, name, surname, avatar_url, status, birthdate, pharmacy")
+        .select("id, name, surname, avatar_url, status, birthdate, pharmacy, active")
         .order("name", { ascending: true });
 
       if (error) {
@@ -226,9 +307,10 @@ export default function CardPersoneelBeheren() {
             name: p.name,
             surname: p.surname ?? null,
             avatar_url: p.avatar_url ?? null,
-            status: p.status ?? null,
+            status: canonicalStatusValue(p.status),
             birthdate: ddmmyyyyToISO(p.birthdate ?? null) || "",
             pharmacy_single: firstPh || "",
+            active: String(p.active ?? "").trim() ? String(p.active) : null,
           } as Personnel;
         });
         setPeople(list);
@@ -239,8 +321,27 @@ export default function CardPersoneelBeheren() {
       const values = (sdata || [])
         .map((r: any) => r.status)
         .filter((v: any) => typeof v === "string" && v.trim().length > 0);
-      const uniq = Array.from(new Set(values));
-      if (uniq.length) setStatusOptions(uniq);
+      const uniq = Array.from(new Set(values.map((v) => canonicalStatusValue(v) || "").filter(Boolean)));
+
+      // Filter legacy values die we niet willen tonen.
+      const hiddenSet = new Set<string>(["active", "inactive"]);
+      const replSet = new Set<string>(REPLACEMENT_STATUS_OPTIONS);
+      const middle = uniq.filter((opt) => {
+        const v = String(opt || "").trim();
+        if (!v) return false;
+        return !hiddenSet.has(v) && !replSet.has(v);
+      });
+
+      // Basisopties altijd aanwezig; replacement-opties altijd als laatste.
+      const baseSet = new Set<string>(BASE_STATUS_OPTIONS);
+      const middleWithoutBase = middle.filter((v) => !baseSet.has(v));
+      const nextStatusOptions = [...BASE_STATUS_OPTIONS, ...middleWithoutBase, ...REPLACEMENT_STATUS_OPTIONS];
+      setStatusOptions(nextStatusOptions);
+      // Initieel: toon de eerste dropdown waarde bij toevoegen (maar override niet als user al gekozen heeft)
+      setNewStatus((cur) => {
+        if (newStatusTouched) return cur;
+        return nextStatusOptions[0] || cur;
+      });
     })();
   }, []);
 
@@ -260,9 +361,39 @@ export default function CardPersoneelBeheren() {
       avatar_url: p.avatar_url || null,
       birthdate: birthStr, // "DDMMYYYY" of null
       pharmacy: p.pharmacy_single ? [p.pharmacy_single] : [], // array 0/1
+      active: canonicalActiveValue(p.active),
     };
     const { error } = await supabase.from("personnel").update(payload).eq("id", p.id);
-    if (error) setErr(error.message || "Opslaan mislukt.");
+    if (error) {
+      setErr(error.message || "Opslaan mislukt.");
+      return;
+    }
+    dispatchPersonnelUpdated({ id: p.id, kind: "save" });
+  };
+
+  const toggleActive = async (p: Personnel) => {
+    if (savingActiveId === p.id) return;
+    setErr("");
+
+    const prev = canonicalActiveValue(p.active);
+    const next: "yes" | "no" = prev === "yes" ? "no" : "yes";
+
+    // Optimistic UI update
+    updatePersonField(p.id, "active", next);
+
+    setSavingActiveId(p.id);
+    const { error } = await supabase.from("personnel").update({ active: next }).eq("id", p.id);
+    setSavingActiveId(null);
+
+    if (error) {
+      updatePersonField(p.id, "active", prev);
+      setErr(error.message || "Opslaan mislukt.");
+      return;
+    }
+
+    dispatchBrowserEvent("personnel-active-updated", { id: p.id, active: next });
+
+    dispatchPersonnelUpdated({ id: p.id, kind: "active", active: next });
   };
 
   // --- Verwijderen medewerker via popup ---
@@ -286,6 +417,7 @@ export default function CardPersoneelBeheren() {
       return;
     }
     setPeople((prev) => prev.filter((x) => x.id !== p.id));
+    dispatchPersonnelUpdated({ id: p.id, kind: "delete" });
   };
 
   // Avatar upload
@@ -341,6 +473,7 @@ export default function CardPersoneelBeheren() {
     if (!newSurname.trim()) return setErr("Achternaam is verplicht.");
     if (!newStatus.trim()) return setErr("Status is verplicht.");
     const birthStr = isoToDDMMYYYY(newBirthdate || null);
+    const desiredStatus = newStatus.trim();
 
     const { data, error } = await supabase
       .from("personnel")
@@ -348,14 +481,34 @@ export default function CardPersoneelBeheren() {
         name: newName.trim(),
         surname: newSurname.trim(),
         birthdate: birthStr,
-        status: newStatus.trim(),
+        status: desiredStatus,
         pharmacy: newPharmacy ? [newPharmacy] : [],
+        active: "yes",
       } as never)
-      .select("id, name, surname, avatar_url, status, birthdate, pharmacy")
+      .select("id, name, surname, avatar_url, status, birthdate, pharmacy, active")
       .single();
 
     if (error) return setErr(error.message || "Toevoegen mislukt.");
     if (data) {
+      // Sommige DB's hebben een default/trigger die status op 'active' zet bij insert.
+      // Corrigeer meteen naar de gekozen dropdown-waarde.
+      const insertedId = String((data as any).id || "").trim();
+      const insertedStatus = String((data as any).status ?? "").trim();
+      if (insertedId && desiredStatus && insertedStatus && insertedStatus !== desiredStatus) {
+        const { error: updErr } = await supabase.from("personnel").update({ status: desiredStatus }).eq("id", insertedId);
+        if (!updErr) {
+          (data as any).status = desiredStatus;
+        }
+      }
+
+      const insertedActive = canonicalActiveValue((data as any).active);
+      if (insertedId && insertedActive !== "yes") {
+        const { error: updActiveErr } = await supabase.from("personnel").update({ active: "yes" }).eq("id", insertedId);
+        if (!updActiveErr) {
+          (data as any).active = "yes";
+        }
+      }
+
       const firstPh = Array.isArray((data as any).pharmacy) && (data as any).pharmacy.length > 0 ? (data as any).pharmacy[0] : "";
       const normalized: Personnel = {
         id: (data as any).id,
@@ -365,12 +518,14 @@ export default function CardPersoneelBeheren() {
         status: (data as any).status ?? null,
         birthdate: ddmmyyyyToISO((data as any).birthdate ?? null) || "",
         pharmacy_single: firstPh,
+        active: "yes",
       };
       setPeople((prev) => [...prev, normalized].sort((a, b) => a.name.localeCompare(b.name)));
+      dispatchPersonnelUpdated({ id: normalized.id, kind: "add" });
       setNewName("");
       setNewSurname("");
       setNewBirthdate("");
-      setNewStatus(statusOptions[0] || "active");
+      setNewStatus(statusOptions[0] || REPLACEMENT_STATUS_OPTIONS[0]);
       setNewPharmacy("");
     }
   };
@@ -428,18 +583,25 @@ export default function CardPersoneelBeheren() {
           onSubmit={addPerson}
           style={{
             display: "grid",
-            gridTemplateColumns: `${FIELD_W}px ${FIELD_W}px ${FIELD_W}px ${FIELD_W}px ${PHARMACY_W}px 50px`,
+            gridTemplateColumns: `${NAME_W}px ${NAME_W}px ${DATE_W}px ${FIELD_W}px ${PHARMACY_W}px 50px`,
             gap: 8,
             alignItems: "center",
           }}
         >
-          <input placeholder="voornaam" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ ...baseField, width: FIELD_W }} />
-          <input placeholder="achternaam" value={newSurname} onChange={(e) => setNewSurname(e.target.value)} style={{ ...baseField, width: FIELD_W }} />
-          <input type="date" placeholder="geboortedatum" value={newBirthdate} onChange={(e) => setNewBirthdate(e.target.value)} style={{ ...baseField, width: FIELD_W }} />
-          <select value={newStatus} onChange={(e) => setNewStatus(e.target.value)} style={{ ...baseField, width: FIELD_W }}>
+          <input placeholder="voornaam" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ ...baseField, width: NAME_W }} />
+          <input placeholder="achternaam" value={newSurname} onChange={(e) => setNewSurname(e.target.value)} style={{ ...baseField, width: NAME_W }} />
+          <input type="date" placeholder="geboortedatum" value={newBirthdate} onChange={(e) => setNewBirthdate(e.target.value)} style={{ ...baseField, width: DATE_W }} />
+          <select
+            value={newStatus}
+            onChange={(e) => {
+              setNewStatusTouched(true);
+              setNewStatus(e.target.value);
+            }}
+            style={{ ...baseField, width: FIELD_W }}
+          >
             {statusOptions.map((opt) => (
               <option key={opt} value={opt}>
-                {opt}
+                {statusLabel(opt)}
               </option>
             ))}
           </select>
@@ -480,17 +642,17 @@ export default function CardPersoneelBeheren() {
           <div style={{ color: COLORS.textMuted }}>Nog geen personeel.</div>
         ) : (
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {people.map((p) => (
+            {people.map((p, idx) => (
               <li
                 key={p.id}
                 onMouseEnter={() => setHoveredAvatarId(p.id)}
                 onMouseLeave={() => setHoveredAvatarId(null)}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: `28px ${FIELD_W}px ${FIELD_W}px ${FIELD_W}px ${FIELD_W}px ${PHARMACY_W}px auto`,
+                  gridTemplateColumns: `28px ${NAME_W}px ${NAME_W}px ${DATE_W}px ${FIELD_W}px ${PHARMACY_W}px ${ACTIVE_W}px auto`,
                   gap: 8,
                   alignItems: "center",
-                  borderBottom: `1px solid ${COLORS.line}`,
+                  borderBottom: idx === people.length - 1 ? "none" : `1px solid ${COLORS.line}`,
                   padding: "8px 0",
                   position: "relative",
                 }}
@@ -566,19 +728,19 @@ export default function CardPersoneelBeheren() {
                   )}
                 </div>
 
-                <input value={p.name} onChange={(e) => updatePersonField(p.id, "name", e.target.value)} placeholder="voornaam" style={{ ...baseField, height: 32, width: FIELD_W }} />
-                <input value={p.surname ?? ""} onChange={(e) => updatePersonField(p.id, "surname", e.target.value)} placeholder="achternaam" style={{ ...baseField, height: 32, width: FIELD_W }} />
+                <input value={p.name} onChange={(e) => updatePersonField(p.id, "name", e.target.value)} placeholder="voornaam" style={{ ...baseField, height: 32, width: NAME_W }} />
+                <input value={p.surname ?? ""} onChange={(e) => updatePersonField(p.id, "surname", e.target.value)} placeholder="achternaam" style={{ ...baseField, height: 32, width: NAME_W }} />
                 <input
                   type="date"
                   value={p.birthdate ?? ""}
                   onChange={(e) => updatePersonField(p.id, "birthdate", e.target.value)}
                   placeholder="geboortedatum"
-                  style={{ ...baseField, height: 32, width: FIELD_W }}
+                  style={{ ...baseField, height: 32, width: DATE_W }}
                 />
                 <select value={p.status ?? (statusOptions[0] || "")} onChange={(e) => updatePersonField(p.id, "status", e.target.value)} style={{ ...baseField, height: 32, width: FIELD_W }}>
                   {statusOptions.map((opt) => (
                     <option key={opt} value={opt}>
-                      {opt}
+                      {statusLabel(opt)}
                     </option>
                   ))}
                 </select>
@@ -597,6 +759,42 @@ export default function CardPersoneelBeheren() {
                     </option>
                   ))}
                 </select>
+
+                {/* Active toggle (yes/no) */}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={canonicalActiveValue(p.active) === "yes"}
+                  aria-disabled={savingActiveId === p.id ? true : undefined}
+                  title={canonicalActiveValue(p.active) === "yes" ? "Actief: yes" : "Actief: no"}
+                  disabled={savingActiveId === p.id}
+                  onClick={() => toggleActive(p)}
+                  style={{
+                    height: 22,
+                    width: ACTIVE_W,
+                    borderRadius: 999,
+                    border: `1px solid ${COLORS.line}`,
+                    background: canonicalActiveValue(p.active) === "yes" ? COLORS.primary : "#cbd5e1",
+                    cursor: savingActiveId === p.id ? "not-allowed" : "pointer",
+                    opacity: savingActiveId === p.id ? 0.7 : 1,
+                    padding: 2,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: canonicalActiveValue(p.active) === "yes" ? "flex-end" : "flex-start",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  <div
+                    aria-hidden
+                    style={{
+                      width: 14,
+                      height: 14,
+                      borderRadius: 999,
+                      background: "#fff",
+                      boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+                    }}
+                  />
+                </button>
 
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                   <button

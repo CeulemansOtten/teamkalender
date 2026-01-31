@@ -185,7 +185,7 @@ export default function CardSchoolvakantieToevoegen() {
   return (
     <div
       style={{
-        width: "min(560px, 100%)",
+        width: "min(425px, 100%)",
         background: UI.card,
         border: `1px solid ${UI.line}`,
         borderRadius: 12,
@@ -230,23 +230,23 @@ export default function CardSchoolvakantieToevoegen() {
           alignItems: "center",
         }}
       >
-        <input type="date" value={svStart} onChange={(e) => setSvStart(e.target.value)} style={field} />
-        <input type="date" value={svEnd} onChange={(e) => setSvEnd(e.target.value)} style={field} />
+        <input type="date" value={svStart} onChange={(e) => setSvStart(e.target.value)} style={{ ...field, width: 118 }} />
+        <input type="date" value={svEnd} onChange={(e) => setSvEnd(e.target.value)} style={{ ...field, width: 118 }} />
         <input
           placeholder="Naam (bv. Zomervakantie)"
           value={svName}
           onChange={(e) => setSvName(e.target.value)}
-          style={field}
+          style={{ ...field, width: 90 }}
+          
         />
         <button
           type="submit"
           disabled={saving}
           style={{
-            height: 36,
-            minWidth: 36,
-            background: UI.btnBg,
-            border: `1px solid ${UI.btnBorder}`,
-            color: UI.btnText,
+            height: 30,
+            minWidth: 30,
+            background: "#0ea5a8",
+            color: "#ffffffff",
             borderRadius: 8,
             cursor: "pointer",
             fontWeight: 800,
@@ -272,7 +272,7 @@ export default function CardSchoolvakantieToevoegen() {
         <div style={{ color: UI.textMuted }}>Nog geen schoolvakanties gevonden.</div>
       ) : (
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-          {grouped.map((g) => (
+          {grouped.map((g, idx) => (
             <li
               key={g.name}
               onMouseEnter={() => setHoveredName(g.name)}
@@ -282,7 +282,7 @@ export default function CardSchoolvakantieToevoegen() {
                 /* ▼ smalle kolom vóór de naam toegevoegd */
                 gridTemplateColumns: "12px 200px 1fr auto",
                 alignItems: "center",
-                borderBottom: `1px solid ${UI.line}`,
+                borderBottom: idx === grouped.length - 1 ? "none" : `1px solid ${UI.line}`,
                 padding: "8px 0",
                 gap: 8,
               }}

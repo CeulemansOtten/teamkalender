@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import localFont from "next/font/local";
 import type { LucideIcon } from "lucide-react";
-import { Calendar, Plane, Clock, Settings, CalendarCheck } from "lucide-react";
+import { Calendar, Plane, Clock, Settings, CalendarCheck, CalendarClock, Sun } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 
 /* Bold font zoals in je kalender */
@@ -27,7 +27,10 @@ const ROW_H = 36; // ✅ vaste hoogte voor alles
 
 type NavItem = { label: string; href: string; icon: LucideIcon };
 const NAV_ITEMS: NavItem[] = [
-  { label: "Teamkalender", href: "/calendar", icon: Calendar },
+  
+  { label: "Planning", href: "/view_planning", icon: Calendar },
+  { label: "Planning Maken", href: "/planning", icon: CalendarClock }, // owner-only
+  { label: "Vakantiekalender", href: "/calendar", icon: Sun },
   { label: "Verlof Aanvragen", href: "/vacation_request", icon: Plane },
   { label: "Verlof Teller", href: "/counter", icon: Clock },
   { label: "Verlof Goedkeuren", href: "/approval", icon: CalendarCheck }, // owner-only
@@ -35,6 +38,14 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export default function FloatingNav() {
+  return (
+    <Suspense fallback={null}>
+      <FloatingNavInner />
+    </Suspense>
+  );
+}
+
+function FloatingNavInner() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const personnelId = searchParams.get("personnel_id") || "";
@@ -77,7 +88,7 @@ export default function FloatingNav() {
 
   const visibleItems = useMemo(() => {
     return NAV_ITEMS.filter((it) => {
-      const ownerOnly = it.href === "/approval" || it.href === "/admin";
+      const ownerOnly = it.href === "/planning" || it.href === "/approval" || it.href === "/admin";
       return ownerOnly ? isOwner : true;
     });
   }, [isOwner]);
@@ -126,7 +137,7 @@ export default function FloatingNav() {
             display: "inline-flex",
             alignItems: "center",
             gap: open ? 12 : 0,
-            maxWidth: open ? 1000 : 0,                 // ⬅️ breedte-animatie
+            maxWidth: open ? 1400 : 0,                 // ⬅️ breedte-animatie (owner-menu past nu volledig)
             height: open ? ROW_H : 0,                  // ⬅️ geen extra hoogte als dicht
             overflow: "hidden",
             transition: "max-width 360ms cubic-bezier(.2,.8,.2,1), height 0ms linear",

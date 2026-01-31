@@ -120,6 +120,12 @@ export default function LoginPage() {
 
     if (typeof window !== "undefined") {
       localStorage.setItem("logged_in_personnel_id", selectedId);
+
+      // Also store as a cookie so server components (like /after_login) can read it.
+      // Keep it non-HttpOnly because it's set client-side.
+      const secure = window.location.protocol === "https:" ? "; Secure" : "";
+      document.cookie = `personnel_id=${encodeURIComponent(selectedId)}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
+
       // iOS Safari zoom fix: reset viewport and scroll
       setTimeout(() => {
         // Scroll naar boven en reset zoom
@@ -135,7 +141,7 @@ export default function LoginPage() {
         }
       }, 100);
     }
-    router.push(`/after_login/?personnel_id=${encodeURIComponent(selectedId)}`);
+    router.push(`/after_login?personnel_id=${encodeURIComponent(selectedId)}`);
   }
 
   return (

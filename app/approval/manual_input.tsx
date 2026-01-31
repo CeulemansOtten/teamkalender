@@ -9,6 +9,7 @@ type Personnel = {
   name: string;
   pharmacy?: string[] | null;
   avatar_url?: string | null;
+  active?: string | null;
 };
 
 type PharmacyRow = { pharmacy: string; daypart: string; hours: number };
@@ -21,6 +22,11 @@ type Props = {
 
 const PHARMACY_CHOICES = ["Apotheek Generaal", "Apotheek Minerva", "Eeuwfeestapotheek"] as const;
 const REASON_CHOICES = ["wettelijk", "overuren", "adv", "andere"] as const;
+
+function isActiveFlag(v: unknown): boolean {
+  const s = String(v ?? "").trim().toLowerCase();
+  return s === "yes" || s === "ja" || s === "true" || s === "1";
+}
 
 const FIELD = {
   label: { fontSize: 13, marginBottom: 6 },
@@ -140,8 +146,9 @@ export default function ManualInputCard({ COLORS, variableFontClass, onAfterInse
   React.useEffect(() => {
     let active = true;
     (async () => {
-      const { data } = await supabase.from("personnel").select("id, name, pharmacy, avatar_url").order("name");
-      if (active && data) setPeople(data as Personnel[]);
+      const { data } = await supabase.from("personnel").select("id, name, pharmacy, avatar_url, active").order("name");
+      if (!active || !data) return;
+      setPeople((data as Personnel[]).filter((p) => isActiveFlag(p.active)));
     })();
     return () => { active = false; };
   }, []);

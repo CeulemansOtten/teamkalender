@@ -350,7 +350,7 @@ export default function CardIslamFeestdagToevoegen() {
                 display: "grid",
                 gridTemplateColumns: `${LEFT_PAD_PX}px ${DATE_COL_PX - LEFT_PAD_PX}px 1fr auto`,
                 alignItems: "center",
-                borderBottom: `1px solid ${COLORS.line}`,
+                borderBottom: idx === groups.length - 1 ? "none" : `1px solid ${COLORS.line}`,
                 padding: "8px 0",
                 gap: 5,
               }}

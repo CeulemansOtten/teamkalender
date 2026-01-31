@@ -64,6 +64,7 @@ type Personnel = {
   name: string;
   surname: string | null;
   avatar_url: string | null;
+  active?: string | null;
 };
 type LeaveEntitlement = {
   id: string;
@@ -176,13 +177,18 @@ export default function CardUrenBeheren() {
     (async () => {
       const { data, error } = await supabase
         .from("personnel")
-        .select("id, name, surname, avatar_url")
+        .select("id, name, surname, avatar_url, active")
         .order("name", { ascending: true });
       if (error) {
         setPeople([]);
         setErr(error.message || "Kon personeel niet laden.");
       } else {
-        setPeople((data || []) as Personnel[]);
+        const isActiveFlag = (value: unknown) => {
+          const v = String(value ?? "").trim().toLowerCase();
+          return v === "yes" || v === "ja" || v === "true" || v === "1";
+        };
+        const next = ((data || []) as Personnel[]).filter((p) => isActiveFlag(p.active));
+        setPeople(next);
       }
     })();
   }, []);

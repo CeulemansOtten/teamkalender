@@ -38,7 +38,7 @@ const DATE_W_SMALL = 118;
 const NAME_W = 210;
 const NAME_W_SMALL = 90;
 const YEAR_W = 80;
-const ADD_BTN_W = 34;
+const ADD_BTN_W = 30;
 const ADD_BTN_H = 30;
 
 /* Iconen */
@@ -271,23 +271,18 @@ export default function CardJoodseFeestdagToevoegen() {
           type="submit"
           aria-label="Feestdag toevoegen"
           style={{
-            height: ADD_BTN_H,
-            width: ADD_BTN_W,
-            minWidth: ADD_BTN_W,
-            background: COLORS.btnBg,
-            textAlign: "center",
-            color: COLORS.btnText,
+            height: 30,
+            minWidth: 30,
+            background: "#0ea5a8",
+            color: "#ffffffff",
             borderRadius: 8,
             cursor: "pointer",
             fontWeight: 800,
-            fontSize: 16,
+            fontSize: 18,
             lineHeight: 1,
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
           }}
-          onMouseOver={(e) => (e.currentTarget.style.background = COLORS.btnHover)}
-          onMouseOut={(e) => (e.currentTarget.style.background = COLORS.btnBg)}
+          onMouseOver={(e) => (e.currentTarget.style.background = "#0c8e91")}
+          onMouseOut={(e) => (e.currentTarget.style.background = "#0ea5a8")}
         >
           +
         </button>
@@ -345,7 +340,7 @@ export default function CardJoodseFeestdagToevoegen() {
                 display: "grid",
                 gridTemplateColumns: `${LEFT_PAD_PX}px ${DATE_COL_PX - LEFT_PAD_PX}px 1fr auto`,
                 alignItems: "center",
-                borderBottom: `1px solid ${COLORS.line}`,
+                borderBottom: idx === groups.length - 1 ? "none" : `1px solid ${COLORS.line}`,
                 padding: "8px 0",
                 gap: 5,
               }}

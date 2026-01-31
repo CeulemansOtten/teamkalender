@@ -11,6 +11,8 @@ import CardFeestdagToevoegen from "./CardFeestdagToevoegen";     // Card 3
 import CardJoodseFeestdagToevoegen from "./CardJoodseFeestdagToevoegen"; // Card 4
 import CardIslamFeestdagToevoegen from "./CardIslamFeestdagToevoegen";   // nieuwe card
 import CardSchoolvakantieToevoegen from "./CardSchoolvakantieToevoegen"; // Card 5
+import CardWachtToevoegen from "./CardWachtToevoegen"; // Card 6
+import CardStandaardPlanning from "./CardStandaardPlanning"; // Card 7
 
 // (optioneel) als je FloatingNav gebruikt op je project:
 import FloatingNav from "../components/FloatingNav";
@@ -88,10 +90,26 @@ export default function AdminPage() {
             marginTop: 12,
           }}
         >
-          <div style={{ gridColumn: "1 / span 2", justifySelf: "start" }}>
-            <CardSchoolvakantieToevoegen />
+          <CardSchoolvakantieToevoegen />
+          <CardWachtToevoegen />
+          <div />
+        </section>
+
+        {/* Rij 4: Standaard planning - over de volle breedte (span 3) */}
+        <section
+          style={{
+            display: "grid",
+            gridTemplateColumns: "425px 425px 425px",
+            justifyContent: "center",
+            justifyItems: "stretch",
+            columnGap: "1%",
+            rowGap: 12,
+            marginTop: 12,
+          }}
+        >
+          <div style={{ gridColumn: "1 / span 3" }}>
+            <CardStandaardPlanning />
           </div>
-          <div /> {/* lege placeholder om de derde kolom op te vullen */}
         </section>
       </main>
     </>

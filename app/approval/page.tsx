@@ -33,9 +33,14 @@ export type Personnel = {
   id: string;
   name: string;
   avatar_url?: string | null;
-  holiday_teller?: number | null;
+  active?: string | null;
 };
 type PersonRef = { id: string; name: string };
+
+function isActiveFlag(v: unknown): boolean {
+  const s = String(v ?? "").trim().toLowerCase();
+  return s === "yes" || s === "ja" || s === "true" || s === "1";
+}
 
 export type LeaveRequest = {
   id: string;
@@ -110,7 +115,7 @@ function normalizePersonnel(p: any): Personnel | null {
   if (!p) return null;
   const obj = Array.isArray(p) ? p[0] : p;
   if (!obj) return null;
-  return { id: obj.id, name: obj.name, holiday_teller: obj.holiday_teller ?? null, avatar_url: obj.avatar_url ?? null };
+  return { id: obj.id, name: obj.name, avatar_url: obj.avatar_url ?? null };
 }
 function normalizeRequests(rows: RawJoinedRow[]): LeaveRequest[] {
   return (rows || []).map((r) => ({
@@ -331,7 +336,6 @@ function ApprovalContent() {
           personnel:personnel_id (
             id,
             name,
-            holiday_teller,
             avatar_url
           )
         `)
@@ -358,10 +362,10 @@ function ApprovalContent() {
       /* Mensenlijst */
       const { data: ppl, error: pplErr } = await supabase
         .from("personnel")
-        .select("id, name, holiday_teller, avatar_url")
+        .select("id, name, avatar_url, active")
         .order("name", { ascending: true });
       if (pplErr) throw pplErr;
-      setPeople((ppl || []) as Personnel[]);
+      setPeople(((ppl || []) as Personnel[]).filter((p) => isActiveFlag(p.active)));
 
       /* Aggregaties voor links */
       const pairsKeySet = new Set<string>();

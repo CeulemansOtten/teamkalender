@@ -16,6 +16,11 @@ import {
 } from "./page";
 import { supabase } from "@/lib/supabaseClient";
 
+function isActiveFlag(v: unknown): boolean {
+  const s = String(v ?? "").trim().toLowerCase();
+  return s === "yes" || s === "ja" || s === "true" || s === "1";
+}
+
 /* ========== KOLOMBREEDTES (zoals jij instelde) ========== */
 const PERSON_SELECT_WIDTH = 140; // px
 const COLS_PERSON = {
@@ -204,6 +209,10 @@ export default function OverviewPerPersonCard(props: Props) {
   } = props;
 
   const [hoverRowId, setHoverRowId] = React.useState<string | null>(null);
+
+  const activePeople = React.useMemo(() => {
+    return (people || []).filter((p) => isActiveFlag(p.active));
+  }, [people]);
 
   // 🔧 HIER WAS DE FOUT — deze regel ontbrak:
   const [confirm, setConfirm] = React.useState<ConfirmState>({ open: false });
@@ -532,7 +541,7 @@ export default function OverviewPerPersonCard(props: Props) {
               style={{ width: "100%", padding: "7px 10px", borderRadius: 10, border: `1px solid ${COLORS.line}`, background: "#fff", height: 34, fontSize: 14 }}
             >
               <option value="">—</option>
-              {people.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+              {activePeople.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
             </select>
           </div>
 
