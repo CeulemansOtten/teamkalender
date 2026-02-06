@@ -57,7 +57,7 @@ export default async function Page({ searchParams }: PageProps) {
   const params = new URLSearchParams();
   if (personnelId) params.set("personnel_id", personnelId);
 
-  const basePath = isPhoneUA(ua) ? "/planning_mobile" : "/calendar";
+  const basePath = isPhoneUA(ua) ? "/planning_mobile" : "/view_planning";
   const to = params.toString() ? `${basePath}?${params.toString()}` : basePath;
 
   // 4) doorsturen

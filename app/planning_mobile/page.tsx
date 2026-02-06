@@ -675,6 +675,8 @@ function PlanningMobileContent() {
                         const showDuty = shouldShowForCell(date, dayIdx, a.key);
                         const cell = showDuty ? (cells[dateKey]?.[a.key] || { morning: [], afternoon: [], night: [] }) : { morning: [], afternoon: [], night: [] };
                         const nightDuty = isNightDuty(date, a.key);
+                        const isDuty = isOnDuty(date, a.key);
+                        const isHoliday = isPublicHoliday(date);
 
                         const renderGroup = (label: string, group: ShiftGroup, show: boolean) => {
                           if (!show) return null;
@@ -735,7 +737,7 @@ function PlanningMobileContent() {
                               border: `1px solid ${COLORS.line}`,
                               borderRadius: 12,
                               padding: 6,
-                              background: COLORS.card,
+                              background: isDuty ? "#fce7f3" : isHoliday ? "#fff9c4" : COLORS.card,
                               minWidth: 0,
                             }}
                           >
