@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState, Suspense } from "react";
 import localFont from "next/font/local";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { sendLeaveNotificationEmails } from "@/lib/sendLeaveEmailAction";
 import FloatingNav from "../components/FloatingNav";
 import LegendNavVacationRequest from "../components/LegendNav_Vacation_Request";
 import { School, PartyPopper, Cake, MoonStar } from "lucide-react";
@@ -867,6 +868,21 @@ function VacationRequestContent() {
       if (error) {
         const alt = await supabase.from("leave_request").insert(rows);
         if (alt.error) throw alt.error;
+      }
+
+      // Fetch newly created leave requests to get their IDs for email notification
+      const createdAtThreshold = new Date(Date.now() - 5000).toISOString(); // Last 5 seconds
+      const { data: newLeaves } = await supabase
+        .from("leave_requests")
+        .select("id, leave_date, daypart")
+        .eq("personnel_id", personnelId)
+        .gte("created_at", createdAtThreshold)
+        .in("daypart", rows.map((r: any) => r.daypart));
+
+      // Send email notifications for each new leave request
+      if (newLeaves && newLeaves.length > 0) {
+        const leaveIds = (newLeaves as any[]).map((l: any) => l.id);
+        await sendLeaveNotificationEmails(leaveIds);
       }
 
       setSelections({});

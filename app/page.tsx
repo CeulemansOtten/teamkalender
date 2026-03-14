@@ -77,7 +77,8 @@ export default function LoginPage() {
       setLoadError("");
       const { data, error } = await supabase
         .from("personnel")
-        .select("id,name,surname,avatar_url,status,birthdate")
+        .select("id,name,surname,avatar_url,status,birthdate,active")
+        .eq("active", "yes") // Filter only active personnel
         .order("name", { ascending: true });
 
       if (!active) return;

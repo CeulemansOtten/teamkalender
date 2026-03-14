@@ -144,6 +144,7 @@ function WeekApotheekContent() {
   const [weekStart, setWeekStart] = useState(getMonday(new Date()));
   const [personnel, setPersonnel] = useState<PersonnelRow[]>([]);
   const [inputs, setInputs] = useState<Record<string, string>>({});
+  const [plannedPersonnelIds, setPlannedPersonnelIds] = useState<Set<string>>(new Set());
   const [onDutyByDate, setOnDutyByDate] = useState<Record<string, Record<string, true>>>({});
   const [nightByDate, setNightByDate] = useState<Record<string, Record<string, true>>>({});
   const [publicHolidaysByDate, setPublicHolidaysByDate] = useState<Record<string, true>>({});
@@ -369,6 +370,13 @@ function WeekApotheekContent() {
   const activePersonnelIdSet = useMemo(() => {
     return new Set(activePersonnel.map((p) => String(p.id)).filter(Boolean));
   }, [activePersonnel]);
+
+  const highlightPersonnelForDisplay = useMemo(() => {
+    return personnel.filter((p) => {
+      const pid = String(p.id);
+      return isActiveFlag(p.active) || plannedPersonnelIds.has(pid);
+    });
+  }, [personnel, plannedPersonnelIds]);
 
   useEffect(() => {
     (async () => {
@@ -1148,6 +1156,7 @@ function WeekApotheekContent() {
 
       const byCell: Record<string, Record<number, { morning: string[]; afternoon: string[]; night: string[] }>> = {};
       const seen = new Set<string>();
+      const plannedIds = new Set<string>();
 
       for (const row of data as Array<{ date?: string; personnel_id?: string; shift?: string; pharmacy?: string | null }>) {
         const date = String(row.date || "");
@@ -1156,6 +1165,8 @@ function WeekApotheekContent() {
         const pharmacy = String(row.pharmacy || "");
         if (!date || !personnel_id || !shift || !pharmacy) continue;
         if (!APOTHEKEN.some((a) => a.key === pharmacy)) continue;
+
+        plannedIds.add(personnel_id);
 
         const dayIdx = dateToIdx[date];
         if (dayIdx === undefined) continue;
@@ -1169,6 +1180,8 @@ function WeekApotheekContent() {
         byCell[pharmacy][dayIdx] ||= { morning: [], afternoon: [], night: [] };
         byCell[pharmacy][dayIdx][group].push(personnel_id);
       }
+
+      setPlannedPersonnelIds(plannedIds);
 
       // Ensure there are enough dropdowns to show saved planning
       setShiftCounts((prev) => {
@@ -1917,7 +1930,7 @@ function WeekApotheekContent() {
           missingPersonnel={missingPersonnel}
           otherRemarksOk={otherRemarksOk}
           otherRemarksLines={otherRemarksLines}
-          highlightPersonnel={activePersonnel.map((p) => ({
+          highlightPersonnel={highlightPersonnelForDisplay.map((p) => ({
             id: String(p.id),
             name: p.name,
             avatar_url: resolveAvatarUrl(p.avatar_url ?? null),
@@ -1931,7 +1944,7 @@ function WeekApotheekContent() {
                 // Otherwise, enable everyone.
                 if (Object.keys(prev).length === 0) {
                   const ids = Array.from(
-                    new Set(activePersonnel.map((p) => String(p.id)).filter(Boolean))
+                    new Set(highlightPersonnelForDisplay.map((p) => String(p.id)).filter(Boolean))
                   );
                   if (ids.length === 0) return prev;
                   const allOff: Record<string, true> = {};
