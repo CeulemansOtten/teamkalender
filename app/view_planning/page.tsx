@@ -235,13 +235,7 @@ function WeekApotheekContent() {
   );
 
   function colorIndexForId(id: string) {
-    // simple deterministic hash -> [0..16]
-    let hash = 5381;
-    for (let i = 0; i < id.length; i++) {
-      hash = ((hash << 5) + hash) ^ id.charCodeAt(i);
-    }
-    const idx = Math.abs(hash) % HIGHLIGHT_COLORS.length;
-    return idx;
+    return colorIndexById.get(id) ?? 0;
   }
 
   function highlightBgForSelection(currentValue: string) {
@@ -297,11 +291,23 @@ function WeekApotheekContent() {
     return collected.map((x) => x.id);
   }
 
-  function prioritizeId(ids: string[], priorityId: string | null, nameById?: Map<string, string>) {
+  function statusOrder(status: string | null | undefined): number {
+    if (status === "owner") return 0;
+    if (status === "pharmacist") return 1;
+    if (status === "replacement") return 2;
+    return 3;
+  }
+
+  function prioritizeId(ids: string[], priorityId: string | null, nameById?: Map<string, string>, statusById?: Map<string, string | null>) {
     const byName = (id: string) => String(nameById?.get(id) || "").trim();
+    const byStatus = (id: string) => statusOrder(statusById?.get(id));
     const sorted = ids
       .slice()
-      .sort((a, b) => byName(a).localeCompare(byName(b), "nl", { sensitivity: "base" }));
+      .sort((a, b) => {
+        const statusDiff = byStatus(a) - byStatus(b);
+        if (statusDiff !== 0) return statusDiff;
+        return byName(a).localeCompare(byName(b), "nl", { sensitivity: "base" });
+      });
 
     if (!priorityId) return sorted;
     const idx = sorted.indexOf(priorityId);
@@ -370,6 +376,17 @@ function WeekApotheekContent() {
   const activePersonnelIdSet = useMemo(() => {
     return new Set(activePersonnel.map((p) => String(p.id)).filter(Boolean));
   }, [activePersonnel]);
+
+  const colorIndexById = useMemo(() => {
+    const sorted = [...activePersonnel].sort((a, b) =>
+      String(a.id).localeCompare(String(b.id))
+    );
+    const map = new Map<string, number>();
+    sorted.forEach((p, i) => {
+      map.set(String(p.id), i % HIGHLIGHT_COLORS.length);
+    });
+    return map;
+  }, [activePersonnel, HIGHLIGHT_COLORS]);
 
   const highlightPersonnelForDisplay = useMemo(() => {
     return personnel.filter((p) => {
@@ -1701,23 +1718,27 @@ function WeekApotheekContent() {
                   const isHoliday = isPublicHoliday(date);
 
                   const nameById = new Map<string, string>(personnel.map((p) => [String(p.id), p.name]));
+                  const statusById = new Map<string, string | null>(personnel.map((p) => [String(p.id), p.status ?? null]));
 
                   const priorityId = highlightedPersonnelId;
 
                   const morningIds = prioritizeId(
                     getOrderedSelectedIdsForCellGroup(apotheek.key, dayIdx, "morning"),
                     priorityId,
-                    nameById
+                    nameById,
+                    statusById
                   );
                   const afternoonIds = prioritizeId(
                     getOrderedSelectedIdsForCellGroup(apotheek.key, dayIdx, "afternoon"),
                     priorityId,
-                    nameById
+                    nameById,
+                    statusById
                   );
                   const nightIds = prioritizeId(
                     getOrderedSelectedIdsForCellGroup(apotheek.key, dayIdx, "night"),
                     priorityId,
-                    nameById
+                    nameById,
+                    statusById
                   );
 
                   const remarkLines = getRemarksForCell(date, apotheek.key);

@@ -95,6 +95,7 @@ type PersonLite = {
   name: string;
   avatar_url: string | null;
   active?: string | null;
+  status?: string | null;
 };
 
 type PlanningRowJoined = {
@@ -179,16 +180,23 @@ function PlanningMobileContent() {
     []
   );
 
-  function colorIndexForId(id: string) {
-    let hash = 5381;
-    for (let i = 0; i < id.length; i++) {
-      hash = ((hash << 5) + hash) ^ id.charCodeAt(i);
+  const colorIndexById = useMemo(() => {
+    const ids = new Set<string>();
+    for (const dateData of Object.values(cells)) {
+      for (const pharmacyData of Object.values(dateData)) {
+        for (const group of ["morning", "afternoon", "night"] as const) {
+          for (const p of pharmacyData[group]) ids.add(p.id);
+        }
+      }
     }
-    return Math.abs(hash) % HIGHLIGHT_COLORS.length;
-  }
+    const sorted = Array.from(ids).sort((a, b) => a.localeCompare(b));
+    const map = new Map<string, number>();
+    sorted.forEach((id, i) => map.set(id, i % HIGHLIGHT_COLORS.length));
+    return map;
+  }, [cells, HIGHLIGHT_COLORS]);
 
   function highlightColorForId(id: string) {
-    return HIGHLIGHT_COLORS[colorIndexForId(id)];
+    return HIGHLIGHT_COLORS[colorIndexById.get(id) ?? 0];
   }
 
   // Prefer the pharmacy of the ?personnel_id person as first column.
@@ -334,7 +342,7 @@ function PlanningMobileContent() {
 
       const { data, error } = await supabase
         .from("planning")
-        .select("date, personnel_id, shift, pharmacy, personnel:personnel_id (id, name, avatar_url, active)")
+        .select("date, personnel_id, shift, pharmacy, personnel:personnel_id (id, name, avatar_url, active, status)")
         .gte("date", start)
         .lte("date", end);
 
@@ -365,6 +373,7 @@ function PlanningMobileContent() {
           name: String(obj?.name || "Onbekend"),
           avatar_url: resolveAvatarUrl(obj?.avatar_url ?? null),
           active: obj?.active ?? null,
+          status: obj?.status ?? null,
         };
 
         const dedupeKey = `${date}|${pharmacy}|${group}|${person.id}`;
@@ -396,7 +405,12 @@ function PlanningMobileContent() {
         }
       }
 
-      // Sort each list by first name
+      const statusOrder = (status: string | null | undefined): number => {
+        if (status === "owner") return 0;
+        if (status === "pharmacist") return 1;
+        if (status === "replacement") return 2;
+        return 3;
+      };
       const firstNameOf = (name: string) => String(name || "").trim().split(/\s+/)[0] || String(name || "");
       for (const dateKey of Object.keys(out)) {
         for (const pharmacyKey of Object.keys(out[dateKey] || {})) {
@@ -406,6 +420,8 @@ function PlanningMobileContent() {
                 if (a.id === priorityId && b.id !== priorityId) return -1;
                 if (b.id === priorityId && a.id !== priorityId) return 1;
               }
+              const statusDiff = statusOrder(a.status) - statusOrder(b.status);
+              if (statusDiff !== 0) return statusDiff;
               return firstNameOf(a.name).localeCompare(firstNameOf(b.name), "nl", { sensitivity: "base" });
             });
           }

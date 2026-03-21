@@ -145,6 +145,24 @@ export default function WeekApotheekPage() {
     return m;
   }, [personnel]);
 
+  const personStatusById = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const p of personnel) {
+      if (!p?.id) continue;
+      m.set(p.id, p.status ?? null);
+    }
+    return m;
+  }, [personnel]);
+
+  const comparePersonnelIds = (a: string, b: string) => {
+    const statusDiff = statusOrder(personStatusById.get(a)) - statusOrder(personStatusById.get(b));
+    if (statusDiff !== 0) return statusDiff;
+    const an = (personNameById.get(a) || a).toLocaleLowerCase();
+    const bn = (personNameById.get(b) || b).toLocaleLowerCase();
+    const c = an.localeCompare(bn);
+    return c !== 0 ? c : a.localeCompare(b);
+  };
+
   const HIGHLIGHT_COLORS = useMemo(
     () =>
       [
@@ -170,13 +188,7 @@ export default function WeekApotheekPage() {
   );
 
   function colorIndexForId(id: string) {
-    // simple deterministic hash -> [0..16]
-    let hash = 5381;
-    for (let i = 0; i < id.length; i++) {
-      hash = ((hash << 5) + hash) ^ id.charCodeAt(i);
-    }
-    const idx = Math.abs(hash) % HIGHLIGHT_COLORS.length;
-    return idx;
+    return colorIndexById.get(id) ?? 0;
   }
 
   function highlightBgForSelection(currentValue: string) {
@@ -252,6 +264,17 @@ export default function WeekApotheekPage() {
   const activePersonnelIdSet = useMemo(() => {
     return new Set(activePersonnel.map((p) => String(p.id)).filter(Boolean));
   }, [activePersonnel]);
+
+  const colorIndexById = useMemo(() => {
+    const sorted = [...activePersonnel].sort((a, b) =>
+      String(a.id).localeCompare(String(b.id))
+    );
+    const map = new Map<string, number>();
+    sorted.forEach((p, i) => {
+      map.set(String(p.id), i % HIGHLIGHT_COLORS.length);
+    });
+    return map;
+  }, [activePersonnel, HIGHLIGHT_COLORS]);
 
   useEffect(() => {
     (async () => {
@@ -556,13 +579,6 @@ export default function WeekApotheekPage() {
       return;
     }
 
-    const comparePersonnelIdsByName = (a: string, b: string) => {
-      const an = (personNameById.get(a) || a).toLocaleLowerCase();
-      const bn = (personNameById.get(b) || b).toLocaleLowerCase();
-      const c = an.localeCompare(bn);
-      return c !== 0 ? c : a.localeCompare(b);
-    };
-
     const slotKeyFor = (slotIdx: number) => {
       if (group === "afternoon") return `${apotheekKey}_${dayIdx}_extra_${slotIdx}`;
       if (group === "night") return `${apotheekKey}_${dayIdx}_night_${slotIdx}`;
@@ -578,7 +594,7 @@ export default function WeekApotheekPage() {
       const filled = slots
         .map((k) => String(next[k] || "").trim())
         .filter((v) => v && v !== "__add_shift__")
-        .sort(comparePersonnelIdsByName);
+        .sort(comparePersonnelIds);
 
       let changed = false;
       for (let i = 0; i < slots.length; i++) {
@@ -607,12 +623,6 @@ export default function WeekApotheekPage() {
   useEffect(() => {
     if (!personnel.length) return;
 
-    const comparePersonnelIdsByName = (a: string, b: string) => {
-      const an = (personNameById.get(a) || a).toLocaleLowerCase();
-      const bn = (personNameById.get(b) || b).toLocaleLowerCase();
-      const c = an.localeCompare(bn);
-      return c !== 0 ? c : a.localeCompare(b);
-    };
 
     setInputs((prev) => {
       let next = prev;
@@ -631,7 +641,7 @@ export default function WeekApotheekPage() {
             const filled = slots
               .map((k) => String(next[k] || "").trim())
               .filter((v) => v && v !== "__add_shift__")
-              .sort(comparePersonnelIdsByName);
+              .sort(comparePersonnelIds);
 
             const updated: Record<string, string> = next === prev ? { ...next } : { ...next };
             let changed = false;
@@ -663,18 +673,27 @@ export default function WeekApotheekPage() {
     });
   }, [personnel.length, personNameById]);
 
+  function statusOrder(status: string | null | undefined): number {
+    if (status === "owner") return 0;
+    if (status === "pharmacist") return 1;
+    if (status === "replacement") return 2;
+    return 3;
+  }
+
+  function sortByStatusThenName(a: PersonnelRow, b: PersonnelRow) {
+    const statusDiff = statusOrder(a.status) - statusOrder(b.status);
+    if (statusDiff !== 0) return statusDiff;
+    return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  }
+
   // Personeel sorteren en indelen
   function getOptions(apotheekKey: string) {
-    const boven = activePersonnel.filter(
-      (p) => Array.isArray(p.pharmacy) && p.pharmacy.includes(apotheekKey)
-    );
-    const onder = activePersonnel.filter(
-      (p) => !Array.isArray(p.pharmacy) || !p.pharmacy.includes(apotheekKey)
-    ).sort((a, b) => {
-      const na = a.name.toLowerCase();
-      const nb = b.name.toLowerCase();
-      return na.localeCompare(nb);
-    });
+    const boven = activePersonnel
+      .filter((p) => Array.isArray(p.pharmacy) && p.pharmacy.includes(apotheekKey))
+      .sort(sortByStatusThenName);
+    const onder = activePersonnel
+      .filter((p) => !Array.isArray(p.pharmacy) || !p.pharmacy.includes(apotheekKey))
+      .sort(sortByStatusThenName);
 
     // Only show the base separator when both groups have options.
     if (boven.length === 0) return [...onder];
@@ -765,10 +784,12 @@ export default function WeekApotheekPage() {
 
     // Build "normal" options without keeping the base separator blindly.
     // We only insert the generic separator when both groups still have options after filtering.
-    const bovenAll = activePersonnel.filter((p) => Array.isArray(p.pharmacy) && p.pharmacy.includes(apotheekKey));
+    const bovenAll = activePersonnel
+      .filter((p) => Array.isArray(p.pharmacy) && p.pharmacy.includes(apotheekKey))
+      .sort(sortByStatusThenName);
     const onderAll = activePersonnel
       .filter((p) => !Array.isArray(p.pharmacy) || !p.pharmacy.includes(apotheekKey))
-      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+      .sort(sortByStatusThenName);
 
     const isExcludedNormal = (pid: string) => {
       if (!pid) return true;
@@ -788,13 +809,13 @@ export default function WeekApotheekPage() {
 
     const leavePeople = activePersonnel
       .filter((p) => leaveSet.has(p.id) && !selected.has(p.id))
-      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+      .sort(sortByStatusThenName)
       .map((p) => ({ id: p.id, name: p.name }));
 
     const vrijPeople = weekdayLower
       ? activePersonnel
           .filter((p) => vrijSet.has(p.id) && !leaveSet.has(p.id) && !selected.has(p.id))
-          .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+          .sort(sortByStatusThenName)
           .map((p) => ({ id: p.id, name: p.name }))
       : [];
 
@@ -1477,9 +1498,6 @@ export default function WeekApotheekPage() {
       for (const p of personnel) {
         const pid = String(p.id);
         if (!pid) continue;
-
-        // Only require planning for active personnel.
-        if (String(p.active || "").trim().toLowerCase() !== "yes") continue;
 
         const mustMorning = !(vrijMorning && vrijMorning.has(pid)) && !leaveMorning.has(pid);
         const mustAfternoon = !(vrijAfternoon && vrijAfternoon.has(pid)) && !leaveAfternoon.has(pid);
